@@ -1,0 +1,4 @@
+interface:
+  display_name: "PHP Code Audit"
+  short_description: "Audit PHP code for high-risk security flaws"
+  default_prompt: "Use $php-code-audit to audit this PHP codebase and produce exploitable findings with concrete patches."

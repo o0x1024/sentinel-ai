@@ -1,0 +1,339 @@
+//! HTTP request tool using rig-core Tool trait
+
+use rig::tool::Tool;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::error::Error as StdError;
+use std::time::Instant;
+
+use crate::output_storage::StoredOutputArtifact;
+
+/// HTTP request arguments
+#[derive(Debug, Clone, Deserialize, JsonSchema)]
+pub struct HttpRequestArgs {
+    /// Target URL. Optional when referenced_traffic_id or referenced_traffic_index is provided by the agent runtime.
+    #[serde(default)]
+    pub url: Option<String>,
+    /// Referenced traffic history id to replay with its captured URL, method, body, and request headers.
+    #[serde(default)]
+    pub referenced_traffic_id: Option<i64>,
+    /// 1-based referenced traffic index from the current user message to replay.
+    #[serde(default)]
+    pub referenced_traffic_index: Option<usize>,
+    /// HTTP method (GET, POST, PUT, DELETE, etc.)
+    #[serde(default = "default_method")]
+    pub method: String,
+    /// Request headers as key-value pairs
+    #[serde(default)]
+    pub headers: HashMap<String, String>,
+    /// Request body (for POST, PUT, etc.)
+    #[serde(default)]
+    pub body: Option<String>,
+    /// Request timeout in seconds
+    #[serde(default = "default_timeout")]
+    pub timeout_secs: u64,
+    /// Follow redirects
+    #[serde(default = "default_follow_redirects")]
+    pub follow_redirects: bool,
+    /// Whether to store oversized response body into context files (agent-only)
+    #[serde(default)]
+    pub enable_large_output_storage: bool,
+    /// Internal execution id for scoping output storage
+    #[serde(default)]
+    pub execution_id: Option<String>,
+}
+
+fn default_method() -> String {
+    "GET".to_string()
+}
+fn default_timeout() -> u64 {
+    30
+}
+fn default_follow_redirects() -> bool {
+    true
+}
+
+/// HTTP request result
+#[derive(Debug, Clone, Serialize)]
+pub struct HttpRequestOutput {
+    pub url: String,
+    pub status_code: u16,
+    pub status_text: String,
+    pub headers: HashMap<String, String>,
+    pub body: String,
+    pub body_length: usize,
+    pub response_time_ms: u64,
+    pub truncated: bool,
+    pub original_size: usize,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub stored_artifacts: Vec<StoredOutputArtifact>,
+}
+
+/// HTTP request errors
+#[derive(Debug, thiserror::Error)]
+pub enum HttpRequestError {
+    #[error("Invalid URL: {0}")]
+    InvalidUrl(String),
+    #[error("Request failed: {0}")]
+    RequestFailed(String),
+    #[error("Timeout: {0}")]
+    Timeout(String),
+}
+
+/// HTTP request tool
+#[derive(Debug, Clone)]
+pub struct HttpRequestTool {
+    client: reqwest::Client,
+}
+
+impl Default for HttpRequestTool {
+    fn default() -> Self {
+        // Create client with proxy support
+        let client = tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current().block_on(async {
+                let builder = reqwest::Client::builder().danger_accept_invalid_certs(true);
+                let builder = sentinel_core::global_proxy::apply_proxy_to_client(builder).await;
+                builder.build().unwrap_or_default()
+            })
+        });
+
+        Self { client }
+    }
+}
+
+impl HttpRequestTool {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_client(client: reqwest::Client) -> Self {
+        Self { client }
+    }
+
+    pub const NAME: &'static str = "http_request";
+    pub const DESCRIPTION: &'static str = concat!(
+        "Send a direct HTTP request to a known URL and inspect the exact response. ",
+        "Use when you already have a target endpoint and need precise status code, headers, body, ",
+        "redirect behavior, custom headers, or a request body. Supports GET/POST/PUT/DELETE/HEAD/PATCH. ",
+        "Prefer web_search for discovering sources, and prefer shell only when you specifically need CLI composition."
+    );
+
+    fn format_reqwest_error(stage: &str, error: &reqwest::Error) -> String {
+        let mut details = vec![format!("{stage} failed: {error}")];
+
+        let mut kinds: Vec<String> = Vec::new();
+        if error.is_timeout() {
+            kinds.push("timeout".to_string());
+        }
+        if error.is_connect() {
+            kinds.push("connect".to_string());
+        }
+        if error.is_request() {
+            kinds.push("request".to_string());
+        }
+        if error.is_body() {
+            kinds.push("body".to_string());
+        }
+        if error.is_decode() {
+            kinds.push("decode".to_string());
+        }
+        if error.is_redirect() {
+            kinds.push("redirect".to_string());
+        }
+        if let Some(status) = error.status() {
+            kinds.push(format!("status={status}"));
+        }
+        if !kinds.is_empty() {
+            details.push(format!("kind: {}", kinds.join(", ")));
+        }
+
+        if let Some(url) = error.url() {
+            details.push(format!("url: {url}"));
+        }
+
+        let mut causes = Vec::new();
+        let mut current = error.source();
+        while let Some(source) = current {
+            let text = source.to_string();
+            if !text.trim().is_empty() && !causes.iter().any(|existing| existing == &text) {
+                causes.push(text);
+            }
+            current = source.source();
+        }
+        if !causes.is_empty() {
+            details.push(format!("caused by: {}", causes.join(" -> ")));
+        }
+
+        details.join("\n")
+    }
+}
+
+impl Tool for HttpRequestTool {
+    const NAME: &'static str = Self::NAME;
+    type Args = HttpRequestArgs;
+    type Output = HttpRequestOutput;
+    type Error = HttpRequestError;
+
+    async fn definition(&self, _prompt: String) -> rig::completion::ToolDefinition {
+        rig::completion::ToolDefinition {
+            name: Self::NAME.to_string(),
+            description: Self::DESCRIPTION.to_string(),
+            parameters: serde_json::to_value(schemars::schema_for!(HttpRequestArgs))
+                .unwrap_or_default(),
+        }
+    }
+
+    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
+        let start_time = Instant::now();
+
+        // Parse URL
+        let target_url = args
+            .url
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| {
+                HttpRequestError::InvalidUrl(
+                    "url is required unless the agent runtime resolves referenced traffic"
+                        .to_string(),
+                )
+            })?;
+
+        let url = reqwest::Url::parse(target_url)
+            .map_err(|e| HttpRequestError::InvalidUrl(e.to_string()))?;
+
+        // Build request
+        let method = args.method.to_uppercase();
+        let mut request = match method.as_str() {
+            "GET" => self.client.get(url.clone()),
+            "POST" => self.client.post(url.clone()),
+            "PUT" => self.client.put(url.clone()),
+            "DELETE" => self.client.delete(url.clone()),
+            "HEAD" => self.client.head(url.clone()),
+            "PATCH" => self.client.patch(url.clone()),
+            _ => {
+                return Err(HttpRequestError::RequestFailed(format!(
+                    "Unsupported method: {}",
+                    method
+                )))
+            }
+        };
+
+        // Add headers
+        for (key, value) in &args.headers {
+            request = request.header(key.as_str(), value.as_str());
+        }
+
+        // Add body
+        if let Some(body) = &args.body {
+            request = request.body(body.clone());
+        }
+
+        // Set timeout
+        request = request.timeout(std::time::Duration::from_secs(args.timeout_secs));
+
+        // Send request
+        let response = request.send().await.map_err(|error| {
+            HttpRequestError::RequestFailed(Self::format_reqwest_error("request send", &error))
+        })?;
+
+        let status_code = response.status().as_u16();
+        let status_text = response.status().to_string();
+
+        // Collect headers
+        let mut headers = HashMap::new();
+        for (key, value) in response.headers() {
+            if let Ok(v) = value.to_str() {
+                headers.insert(key.to_string(), v.to_string());
+            }
+        }
+
+        // Get body
+        let body = response.text().await.map_err(|error| {
+            HttpRequestError::RequestFailed(Self::format_reqwest_error(
+                "response body read",
+                &error,
+            ))
+        })?;
+        let original_size = body.len();
+        let mut stored_artifacts = Vec::new();
+
+        // Store large response only for agent-invoked calls
+        let body = if args.enable_large_output_storage {
+            match crate::output_storage::store_output_unified("http_response", &body, None, args.execution_id.as_deref())
+                .await
+            {
+                Ok(storage_result) => {
+                    if let Some(artifact) = storage_result.to_stored_artifact("body") {
+                        stored_artifacts.push(artifact);
+                    }
+                    storage_result.get_agent_content()
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to store HTTP response to container: {}", e);
+                    // Fallback: return original body (or truncate if too large)
+                    if body.len() > 100_000 {
+                        let preview = body.chars().take(100_000).collect::<String>();
+                        format!(
+                            "{}\n\n[Response too large, showing first 100K chars. Total: {} KB]",
+                            preview,
+                            original_size / 1024
+                        )
+                    } else {
+                        body
+                    }
+                }
+            }
+        } else {
+            body
+        };
+
+        let truncated = body.contains("[Large Output Stored");
+
+        let body_length = body.len();
+        let response_time_ms = start_time.elapsed().as_millis() as u64;
+
+        Ok(HttpRequestOutput {
+            url: target_url.to_string(),
+            status_code,
+            status_text,
+            headers,
+            body,
+            body_length,
+            response_time_ms,
+            truncated,
+            original_size,
+            stored_artifacts,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HttpRequestTool;
+
+    #[tokio::test]
+    async fn formats_connect_refused_reqwest_chain() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind test listener");
+        let addr = listener.local_addr().expect("listener addr");
+        drop(listener);
+
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(300))
+            .build()
+            .expect("build reqwest client");
+
+        let error = client
+            .get(format!("http://{addr}/"))
+            .send()
+            .await
+            .expect_err("closed localhost port should refuse connection");
+
+        let formatted = HttpRequestTool::format_reqwest_error("request send", &error);
+        assert!(formatted.contains("request send failed:"), "{formatted}");
+        assert!(formatted.contains("kind:"), "{formatted}");
+        assert!(formatted.contains("url: http://"), "{formatted}");
+        assert!(formatted.contains("caused by:"), "{formatted}");
+    }
+}

@@ -1,0 +1,121 @@
+use anyhow::{Context, Result};
+use std::path::PathBuf;
+use std::time::Duration;
+use tracing::info;
+
+use super::db_config::{DatabaseConfig, DatabaseType};
+use super::sqlite_performance::configure_sqlite_connection;
+#[cfg(feature = "db-mysql")]
+use super::sqlx_compat::MySqlPoolOptions;
+#[cfg(feature = "db-postgres")]
+use super::sqlx_compat::PgPoolOptions;
+use super::sqlx_compat::{MySqlPool, PgPool};
+
+#[derive(Debug, Clone)]
+pub enum DatabasePool {
+    PostgreSQL(PgPool),
+    SQLite(sqlx::SqlitePool),
+    MySQL(MySqlPool),
+}
+
+impl DatabasePool {
+    pub async fn connect(config: &DatabaseConfig) -> Result<Self> {
+        info!("Connecting to database: {:?}", config.db_type);
+
+        let connection_string = config.build_connection_string();
+
+        match config.db_type {
+            DatabaseType::PostgreSQL => {
+                #[cfg(feature = "db-postgres")]
+                {
+                    let pool = PgPoolOptions::new()
+                        .max_connections(config.max_connections)
+                        .acquire_timeout(Duration::from_secs(config.query_timeout))
+                        .connect(&connection_string)
+                        .await
+                        .context("Failed to connect to PostgreSQL database")?;
+
+                    Ok(DatabasePool::PostgreSQL(pool))
+                }
+                #[cfg(not(feature = "db-postgres"))]
+                {
+                    Err(anyhow::anyhow!(
+                        "PostgreSQL support is disabled. Rebuild with feature `db-postgres`."
+                    ))
+                }
+            }
+            DatabaseType::SQLite => {
+                let sqlite_path = config.path.clone().unwrap_or_else(|| {
+                    dirs::data_dir()
+                        .unwrap_or_else(|| PathBuf::from("."))
+                        .join("sentinel-ai")
+                        .join("database.db")
+                        .to_string_lossy()
+                        .to_string()
+                });
+                if let Some(parent) = PathBuf::from(&sqlite_path).parent() {
+                    std::fs::create_dir_all(parent)
+                        .context("Failed to create SQLite database directory")?;
+                }
+
+                let enable_wal = config.enable_wal;
+                let pool = sqlx::sqlite::SqlitePoolOptions::new()
+                    .max_connections(config.max_connections)
+                    .acquire_timeout(Duration::from_secs(config.query_timeout))
+                    .after_connect(move |conn, _meta| {
+                        Box::pin(async move {
+                            configure_sqlite_connection(conn, enable_wal).await?;
+                            Ok(())
+                        })
+                    })
+                    .connect(&connection_string)
+                    .await
+                    .context("Failed to connect to SQLite database")?;
+
+                Ok(DatabasePool::SQLite(pool))
+            }
+            DatabaseType::MySQL => {
+                #[cfg(feature = "db-mysql")]
+                {
+                    let pool = MySqlPoolOptions::new()
+                        .max_connections(config.max_connections)
+                        .acquire_timeout(Duration::from_secs(config.query_timeout))
+                        .connect(&connection_string)
+                        .await
+                        .context("Failed to connect to MySQL database")?;
+
+                    Ok(DatabasePool::MySQL(pool))
+                }
+                #[cfg(not(feature = "db-mysql"))]
+                {
+                    Err(anyhow::anyhow!(
+                        "MySQL support is disabled. Rebuild with feature `db-mysql`."
+                    ))
+                }
+            }
+        }
+    }
+
+    pub async fn test_connection(&self) -> Result<()> {
+        match self {
+            DatabasePool::PostgreSQL(pool) => {
+                sqlx::query("SELECT 1").execute(pool).await?;
+            }
+            DatabasePool::SQLite(pool) => {
+                sqlx::query("SELECT 1").execute(pool).await?;
+            }
+            DatabasePool::MySQL(pool) => {
+                sqlx::query("SELECT 1").execute(pool).await?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn db_type(&self) -> DatabaseType {
+        match self {
+            DatabasePool::PostgreSQL(_) => DatabaseType::PostgreSQL,
+            DatabasePool::SQLite(_) => DatabaseType::SQLite,
+            DatabasePool::MySQL(_) => DatabaseType::MySQL,
+        }
+    }
+}

@@ -1,0 +1,1892 @@
+<template>
+  <!-- Tenth Man Critique - Special Alert Message -->
+  <div
+    v-if="isTenthManCritique"
+    class="tenth-man-panel rounded-lg overflow-hidden bg-error/10 border-l-4 border-error mb-2 shadow-lg"
+  >
+    <div class="flex items-center gap-3 px-4 py-3 bg-error/20 border-b border-error/20">
+      <div
+        class="w-8 h-8 rounded-full bg-error flex items-center justify-center flex-shrink-0 shadow-sm"
+      >
+        <i class="fas fa-user-secret text-white text-sm"></i>
+      </div>
+      <div class="flex-1">
+        <div class="font-bold text-error text-sm uppercase tracking-wide">The Tenth Man Rule</div>
+        <div class="text-xs text-error/70 font-medium">Adversarial Review Initiated</div>
+      </div>
+    </div>
+    <div class="px-5 py-4 bg-base-100/80 text-base-content relative">
+      <!-- Watermark -->
+      <i
+        class="fas fa-exclamation-triangle absolute right-4 top-4 text-8xl text-error/5 pointer-events-none"
+      ></i>
+      <div class="relative z-10 prose prose-sm max-w-none">
+        <MarkdownRenderer :content="message.content" />
+      </div>
+    </div>
+  </div>
+
+  <!-- Segment Summary Message - Sliding Window Memory -->
+  <div
+    v-else-if="isSegmentSummary"
+    class="segment-summary-panel rounded-lg overflow-hidden bg-info/10 border-l-4 border-info"
+  >
+    <!-- Panel Header -->
+    <button
+      type="button"
+      @click="toggleSummaryPanel"
+      class="summary-panel-header flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-info/20 transition-colors"
+      :aria-expanded="isSummaryPanelExpanded ? 'true' : 'false'"
+    >
+      <!-- Icon -->
+      <i class="fas fa-layer-group text-info text-lg"></i>
+
+      <!-- Title -->
+      <div class="flex-1">
+        <div class="font-semibold text-sm text-info">{{ t('agent.segmentSummary') }}</div>
+        <div class="text-xs text-base-content/60 mt-0.5">
+          {{ t('agent.segmentIndex') }}: #{{ message.metadata?.segment_index }} ·
+          {{ formatNumber(message.metadata?.summary_tokens) }} tokens
+        </div>
+      </div>
+
+      <!-- Expand/Collapse Icon -->
+      <i
+        :class="[
+          'fas transition-transform text-xs text-info',
+          isSummaryPanelExpanded ? 'fa-chevron-up' : 'fa-chevron-down',
+        ]"
+      ></i>
+    </button>
+
+    <!-- Panel Content (collapsible) -->
+    <div v-show="isSummaryPanelExpanded" class="summary-panel-content border-t border-info/30">
+      <div class="px-4 py-3 bg-base-100/50">
+        <div class="text-xs text-base-content/70">
+          <div
+            v-if="message.metadata?.summary_content"
+            class="summary-content-box p-3 bg-base-200/50 rounded border border-base-300 max-h-96 overflow-y-auto"
+          >
+            <MarkdownRenderer :content="message.metadata.summary_content" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Global Summary Message - Long-term Memory -->
+  <div
+    v-else-if="isGlobalSummary"
+    class="global-summary-panel rounded-lg overflow-hidden bg-warning/10 border-l-4 border-warning"
+  >
+    <!-- Panel Header -->
+    <button
+      type="button"
+      @click="toggleSummaryPanel"
+      class="summary-panel-header flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-warning/20 transition-colors"
+      :aria-expanded="isSummaryPanelExpanded ? 'true' : 'false'"
+    >
+      <!-- Icon -->
+      <i class="fas fa-brain text-warning text-lg"></i>
+
+      <!-- Title -->
+      <div class="flex-1">
+        <div class="font-semibold text-sm text-warning">{{ t('agent.globalSummary') }}</div>
+        <div class="text-xs text-base-content/60 mt-0.5">
+          {{ t('agent.longTermMemory') }} ·
+          {{ formatNumber(message.metadata?.summary_tokens) }} tokens
+        </div>
+      </div>
+
+      <!-- Expand/Collapse Icon -->
+      <i
+        :class="[
+          'fas transition-transform text-xs text-warning',
+          isSummaryPanelExpanded ? 'fa-chevron-up' : 'fa-chevron-down',
+        ]"
+      ></i>
+    </button>
+
+    <!-- Panel Content (collapsible) -->
+    <div v-show="isSummaryPanelExpanded" class="summary-panel-content border-t border-warning/30">
+      <div class="px-4 py-3 bg-base-100/50">
+        <div class="text-xs text-base-content/70">
+          <div
+            v-if="message.metadata?.summary_content"
+            class="summary-content-box p-3 bg-base-200/50 rounded border border-base-300 max-h-96 overflow-y-auto"
+          >
+            <MarkdownRenderer :content="message.metadata.summary_content" />
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div v-else-if="isParallelModelExecution" class="mb-2">
+    <ParallelModelResultPanel
+      v-if="parallelRun"
+      :run="parallelRun"
+    />
+    <div v-else class="rounded-lg border border-base-300 bg-base-100 px-4 py-3 text-sm text-base-content/60">
+      正在加载并行执行结果...
+    </div>
+  </div>
+
+  <!-- Skill Loaded Message -->
+  <div
+    v-else-if="isSkillLoaded"
+    class="rounded-lg overflow-hidden bg-success/10 border-l-4 border-success mb-2"
+  >
+    <div class="flex items-center gap-3 px-4 py-3 bg-success/20 border-b border-success/20">
+      <div
+        class="w-8 h-8 rounded-full bg-success flex items-center justify-center flex-shrink-0 shadow-sm"
+      >
+        <i class="fas fa-lightbulb text-white text-sm"></i>
+      </div>
+      <div class="flex-1">
+        <div class="font-semibold text-sm text-success">
+          {{ t('agent.skillLoadedTitle') }}
+        </div>
+        <div class="text-xs text-base-content/70 mt-0.5">
+          {{ message.metadata?.skill_name }} ({{ message.metadata?.skill_id }})
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Deferred Tools Activated Message -->
+  <div
+    v-else-if="isToolsActivated"
+    class="rounded-lg overflow-hidden bg-info/10 border-l-4 border-info mb-2"
+  >
+    <div class="flex items-center gap-3 px-4 py-3 bg-info/20 border-b border-info/20">
+      <div
+        class="w-8 h-8 rounded-full bg-info flex items-center justify-center flex-shrink-0 shadow-sm"
+      >
+        <i class="fas fa-toolbox text-white text-sm"></i>
+      </div>
+      <div class="flex-1">
+        <div class="font-semibold text-sm text-info">
+          {{ t('agent.toolsActivatedTitle') }}
+        </div>
+        <div class="text-xs text-base-content/70 mt-0.5">
+          {{ toolsActivatedPreview }}
+        </div>
+      </div>
+      <span class="badge badge-sm badge-ghost">{{ toolsActivatedCount }}</span>
+    </div>
+    <div class="px-4 py-3 bg-base-100/60 text-xs text-base-content/75 space-y-2">
+      <div v-if="message.metadata?.query">
+        <span class="font-medium">{{ t('agent.toolsActivatedQueryLabel') }}:</span>
+        {{ message.metadata?.query }}
+      </div>
+      <div>
+        <span class="font-medium">{{ t('agent.toolsActivatedActiveSetLabel') }}:</span>
+        {{ message.metadata?.tools_preview || toolsActivatedActiveSetPreview }}
+      </div>
+      <div v-if="message.metadata?.runtime_hint">
+        <span class="font-medium">{{ t('agent.toolsActivatedReasonLabel') }}:</span>
+        {{ message.metadata?.runtime_hint }}
+      </div>
+    </div>
+  </div>
+
+  <div
+    v-else-if="isTeamDependencyReady"
+    class="rounded-lg overflow-hidden bg-success/10 border-l-4 border-success mb-2"
+  >
+    <div class="flex items-center gap-3 px-4 py-3 bg-success/20 border-b border-success/20">
+      <div
+        class="w-8 h-8 rounded-full bg-success flex items-center justify-center flex-shrink-0 shadow-sm"
+      >
+        <i class="fas fa-unlock text-white text-sm"></i>
+      </div>
+      <div class="flex-1">
+        <div class="font-semibold text-sm text-success">
+          {{ t('agent.teamDependencyReadyTitle') }}
+        </div>
+        <div class="text-xs text-base-content/70 mt-0.5">
+          {{
+            message.metadata?.team_task_title ||
+            message.metadata?.team_task_key ||
+            t('agent.teamWorkspaceTabTasks')
+          }}
+        </div>
+      </div>
+      <button
+        v-if="teamDependencyReadyTaskId"
+        class="btn btn-xs btn-success"
+        @click="handleFocusTeamTask"
+      >
+        {{ message.metadata?.action_label || t('agent.teamDependencyReadyAction') }}
+      </button>
+    </div>
+    <div class="px-4 py-3 bg-base-100/60 text-xs text-base-content/75">
+      {{ message.content }}
+    </div>
+  </div>
+
+  <!-- Shell Tool - Render as independent message block -->
+  <div v-else-if="isSkillsToolCard" class="space-y-1">
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <div
+      :class="['rounded-lg overflow-hidden border-l-4 mb-2', skillsCardContainerClass]"
+    >
+      <div :class="['flex items-center gap-3 px-4 py-3 border-b', skillsCardHeaderClass]">
+        <div
+          :class="[
+            'w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm',
+            skillsCardIconClass,
+          ]"
+        >
+          <i class="fas fa-book-open text-white text-sm"></i>
+        </div>
+        <div class="flex-1">
+          <div :class="['font-semibold text-sm', skillsCardTitleClass]">
+            {{ skillsCardTitle }}
+          </div>
+          <div v-if="skillsCardTarget" class="text-xs text-base-content/70 mt-0.5">
+            {{ skillsCardTarget }}
+          </div>
+        </div>
+        <span
+          v-if="toolStatus"
+          :class="['status-badge px-2 py-0.5 rounded-full text-xs font-medium', toolStatusClass]"
+        >
+          {{ toolStatusText }}
+        </span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Shell Tool - Render as independent message block -->
+  <div
+    v-else-if="shouldShowSpecializedShellTool && message.type === 'tool_call'"
+    class="space-y-1"
+  >
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <ShellToolResult
+      :args="message.metadata?.tool_args"
+      :result="message.metadata?.tool_result"
+      :error="message.metadata?.error"
+      :status="message.metadata?.status"
+      :execution-id="message.metadata?.execution_id"
+      :tracked-artifacts="message.metadata?.tracked_artifacts"
+    />
+  </div>
+
+  <div
+    v-else-if="isAskUserQuestionTool && message.type === 'tool_call'"
+    class="space-y-1"
+  >
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <AskUserQuestionToolResult
+      :args="message.metadata?.tool_args"
+      :result="message.metadata?.tool_result"
+      :error="message.metadata?.error"
+      :status="message.metadata?.status"
+    />
+  </div>
+
+  <div v-else-if="isFileTool" class="space-y-1">
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <FileToolResult :message="message" />
+  </div>
+
+  <div v-else-if="isSearchTool" class="space-y-1">
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <SearchToolResult :message="message" />
+  </div>
+
+  <div v-else-if="isWebSearchTool" class="space-y-1">
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <WebSearchToolResult
+      :args="message.metadata?.tool_args"
+      :result="message.metadata?.tool_result"
+      :error="message.metadata?.error"
+      :status="message.metadata?.status"
+    />
+  </div>
+
+  <div v-else-if="isMemoryTool" class="space-y-1">
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <MemoryToolResult
+      :args="message.metadata?.tool_args"
+      :result="message.metadata?.tool_result"
+      :error="message.metadata?.error"
+      :status="message.metadata?.status"
+    />
+  </div>
+
+  <!-- Tool Call Message - Collapsible Panel (only render if has content) -->
+  <div
+    v-else-if="message.type === 'tool_call' && hasToolCallContent"
+    class="space-y-1"
+  >
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <ToolCallMessagePanel :message="message" />
+  </div>
+
+  <div v-else-if="isThinkingMessage" class="space-y-1">
+    <TeamMessageAttribution
+      v-if="showTeamAttribution"
+      :label="teamSpeakerLabel"
+    />
+    <ThinkingMessageBlock
+      :content="normalizedMessageContent"
+      :status="thinkingMessageStatus"
+      @heightChanged="emit('heightChanged')"
+    />
+  </div>
+
+  <!-- Regular message block for non-tool-call messages (only render if has content) -->
+  <div v-else-if="hasRegularMessageContent" class="message-container group relative max-w-full">
+    <div :class="['message-block relative min-w-0 rounded-lg px-3 py-2 overflow-hidden', typeClass]">
+      <div
+        v-if="isTeamMessage"
+        class="message-team-indicator inline-flex items-center gap-1 text-xs text-primary font-medium mb-1"
+      >
+        <i class="fas fa-users"></i>
+        <span>{{ teamSpeakerLabel }}</span>
+      </div>
+
+      <!-- Header with type indicator -->
+      <div class="message-header flex items-center gap-2 mb-2 text-sm" v-if="showHeader">
+        <span class="message-type font-semibold text-base-content/70">{{ typeName }}</span>
+        <span v-if="toolName" class="tool-name font-mono text-xs text-primary"
+          >`{{ toolName }}`</span
+        >
+        <span
+          v-if="fileVerificationStatus"
+          :class="['px-2 py-0.5 rounded text-xs font-medium', fileVerificationClass]"
+        >
+          {{ fileVerificationText }}
+        </span>
+        <!-- Tool Status Indicator -->
+        <span
+          v-if="toolStatus"
+          :class="['status-badge px-2 py-0.5 rounded text-xs font-medium', toolStatusClass]"
+        >
+          {{ toolStatusText }}
+        </span>
+        <span v-if="statusIcon" :class="['status-icon font-bold', statusClass]">{{
+          statusIcon
+        }}</span>
+        <span v-if="duration" class="duration ml-auto text-xs text-base-content/60">{{
+          duration
+        }}</span>
+      </div>
+
+      <!-- RAG Citation Indicator -->
+      <div
+        v-if="ragInfo"
+        class="rag-indicator flex items-center gap-2 mb-2 px-3 py-2 bg-info/10 rounded-md border border-info/30"
+      >
+        <i class="fas fa-book text-info text-sm"></i>
+        <span class="text-xs text-info font-medium">
+          <template v-if="ragInfo.rag_sources_used">
+            {{ t('agent.knowledgeBaseCited', { count: ragInfo.source_count }) }}
+          </template>
+          <template v-else>
+            {{ t('agent.noKnowledgeBaseCitations') }}
+          </template>
+        </span>
+      </div>
+
+      <!-- Image Attachments (for user messages) -->
+      <div
+        v-if="message.type === 'user' && imageAttachments.length > 0"
+        class="image-attachments mb-2"
+      >
+        <div class="flex items-center gap-2 mb-2">
+          <i class="fas fa-image text-primary text-sm"></i>
+          <span class="text-xs text-base-content/60">
+            {{ t('agent.imageAttachments') }} ({{ imageAttachments.length }})
+          </span>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <div
+            v-for="(img, idx) in imageAttachments"
+            :key="idx"
+            class="image-attachment relative group"
+          >
+            <button
+              type="button"
+              class="rounded"
+              :title="getImageFilename(img)"
+              @click="openImagePreview(getImagePreviewUrl(img))"
+            >
+              <img
+                :src="getImagePreviewUrl(img)"
+                class="h-24 w-24 object-cover rounded border border-base-300 bg-base-200 cursor-pointer hover:opacity-80 transition-opacity"
+                :alt="getImageFilename(img)"
+              />
+            </button>
+            <div
+              class="absolute bottom-0 left-0 right-0 bg-black/60 text-white text-xs px-1 py-0.5 truncate opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity"
+            >
+              {{ getImageFilename(img) }}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Content -->
+      <div class="message-content text-base-content break-words overflow-hidden">
+        <!-- Edit Mode -->
+        <div v-if="isEditing" class="edit-mode space-y-2">
+          <textarea
+            ref="editTextareaRef"
+            v-model="editedContent"
+            class="w-full bg-base-100 border border-base-300 rounded px-3 py-2 text-sm resize-none focus:outline-none focus:border-primary"
+            rows="3"
+            @keydown.ctrl.enter="handleSaveEdit"
+            @keydown.meta.enter="handleSaveEdit"
+            @keydown.esc="handleCancelEdit"
+          ></textarea>
+          <div class="flex items-center gap-2">
+            <button
+              @click="handleSaveEdit"
+              class="btn btn-xs btn-primary gap-1"
+              :disabled="!editedContent.trim()"
+            >
+              <i class="fas fa-paper-plane"></i>
+              <span>{{ t('agent.sendEdited') }}</span>
+            </button>
+            <button @click="handleCancelEdit" class="btn btn-xs btn-ghost">
+              <i class="fas fa-times"></i>
+              <span>{{ t('common.cancel') }}</span>
+            </button>
+            <span class="text-xs text-base-content/50 ml-auto">
+              {{ t('agent.editHint') }}
+            </span>
+          </div>
+        </div>
+
+        <!-- Display Mode -->
+        <div v-else>
+          <div
+            v-if="isLightweightStreamingRender"
+            class="whitespace-pre-wrap break-words text-sm leading-relaxed text-base-content/90 font-mono"
+          >
+            {{ lightweightStreamingContent }}
+          </div>
+          <MarkdownRenderer
+            v-else
+            :content="formattedContent"
+            :citations="ragInfo?.citations"
+            :show-table-download="showTableDownload"
+            @download-table="handleDownloadTable"
+            @render-html="(html: string) => emit('renderHtml', html)"
+          />
+
+          <div
+            v-if="sessionStats"
+            class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-base-300/50 pt-2 text-xs text-base-content/60"
+          >
+            <span v-if="sessionFirstResponseDuration" class="inline-flex items-center gap-1">
+              <i class="fas fa-bolt text-primary"></i>
+              {{ t('agent.sessionStatsFirstResponse') }}:
+              <span class="font-medium text-base-content/80">{{ sessionFirstResponseDuration }}</span>
+            </span>
+            <span class="inline-flex items-center gap-1">
+              <i class="fas fa-gauge-high text-primary"></i>
+              {{ t('agent.sessionStatsTotalTokens') }}:
+              <span class="font-medium text-base-content/80">{{ formatNumber(sessionStats.total_tokens) }}</span>
+            </span>
+            <span class="inline-flex items-center gap-1">
+              {{ t('agent.sessionStatsInputOutput', {
+                input: formatNumber(sessionStats.input_tokens),
+                output: formatNumber(sessionStats.output_tokens),
+              }) }}
+            </span>
+            <span class="inline-flex items-center gap-1">
+              {{ t('agent.sessionStatsTokenRate') }}:
+              <span class="font-medium text-base-content/80">{{ sessionTokenRate }}</span>
+            </span>
+            <span class="inline-flex items-center gap-1">
+              {{ t('agent.sessionStatsDuration') }}:
+              <span class="font-medium text-base-content/80">{{ sessionDuration }}</span>
+            </span>
+          </div>
+
+          <!-- Document attachments for user messages (shown below content) -->
+          <div
+            v-if="message.type === 'user' && documentAttachments.length > 0"
+            class="document-attachments mt-2 pt-2 border-t border-base-300/50"
+          >
+            <div class="flex flex-wrap gap-2">
+              <div
+                v-for="doc in documentAttachments"
+                :key="doc.id"
+                class="doc-attachment inline-flex items-center gap-2 px-2 py-1 rounded-lg text-xs"
+                :class="doc.file_path ? 'bg-success/20 text-success' : 'bg-warning/20 text-warning'"
+              >
+                <i
+                  :class="['fas', doc.file_path ? 'fa-file-lines' : 'fa-file-circle-exclamation']"
+                ></i>
+                <span class="font-medium truncate max-w-32" :title="doc.original_filename">{{
+                  doc.original_filename
+                }}</span>
+                <span class="opacity-70">({{ formatDocSize(doc.file_size) }})</span>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="message.type === 'user' && referencedFiles.length > 0"
+            class="mt-2 pt-2 border-t border-base-300/50"
+          >
+            <div class="flex items-center gap-2 mb-2 text-xs text-base-content/60">
+              <i class="fas fa-file-code text-secondary"></i>
+              <span>引用文件 ({{ referencedFiles.length }})</span>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <div
+                v-for="file in referencedFiles"
+                :key="file.id"
+                class="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-secondary/10 border border-secondary/25 text-xs"
+              >
+                <span class="badge badge-xs badge-secondary">FILE</span>
+                <span class="font-medium truncate max-w-56" :title="file.relativePath">{{
+                  file.relativePath
+                }}</span>
+                <span class="text-base-content/60">{{ formatDocSize(file.size) }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="message.type === 'user' && referencedMessages.length > 0"
+            class="mt-2 pt-2 border-t border-base-300/50"
+          >
+            <div class="flex items-center gap-2 mb-2 text-xs text-base-content/60">
+              <i class="fas fa-comment-dots text-info"></i>
+              <span>引用消息 ({{ referencedMessages.length }})</span>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <div
+                v-for="referencedMessage in referencedMessages"
+                :key="referencedMessage.id"
+                class="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-info/10 border border-info/25 text-xs"
+              >
+                <span class="badge badge-xs badge-info">{{ referencedMessage.roleLabel }}</span>
+                <span class="font-medium truncate max-w-72" :title="referencedMessage.content">
+                  {{ referencedMessage.content }}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="message.type === 'user' && referencedAssets.length > 0"
+            class="mt-2 pt-2 border-t border-base-300/50"
+          >
+            <div class="flex items-center gap-2 mb-2 text-xs text-base-content/60">
+              <i class="fas fa-cubes text-primary"></i>
+              <span>引用资产 ({{ referencedAssets.length }})</span>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <div
+                v-for="asset in referencedAssets"
+                :key="asset.id"
+                class="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-primary/10 border border-primary/25 text-xs"
+              >
+                <span class="badge badge-xs badge-outline">{{ asset.asset_type }}</span>
+                <span class="font-medium truncate max-w-44" :title="asset.name">{{
+                  asset.name
+                }}</span>
+                <span class="text-base-content/60 truncate max-w-56" :title="asset.value">{{
+                  asset.value
+                }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div
+            v-if="message.type === 'user' && referencedTraffic.length > 0"
+            class="mt-2 pt-2 border-t border-base-300/50"
+          >
+            <div class="flex items-center gap-2 mb-2 text-xs text-base-content/60">
+              <i class="fas fa-network-wired text-accent"></i>
+              <span>引用流量 ({{ referencedTraffic.length }})</span>
+            </div>
+            <div class="flex flex-wrap gap-2">
+              <div
+                v-for="traffic in referencedTraffic"
+                :key="traffic.id"
+                class="inline-flex items-center gap-2 px-2 py-1 rounded-lg bg-accent/10 border border-accent/25 text-xs"
+              >
+                <span class="badge badge-xs badge-accent">{{ traffic.method }}</span>
+                <span class="font-medium truncate max-w-64" :title="traffic.url">
+                  {{ traffic.host }}{{ getTrafficPath(traffic.url) }}
+                </span>
+                <span class="text-base-content/60">{{ traffic.status_code || 'N/A' }}</span>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Tool Result details (for standalone tool_result messages) -->
+      <div
+        v-if="message.type === 'tool_result' && (hasToolArgs || message.content)"
+        class="tool-details mt-2 pt-2 border-t border-base-300"
+      >
+        <button
+          @click="toggleDetails"
+          class="toggle-btn text-xs text-base-content/60 bg-transparent border-none cursor-pointer p-0 underline hover:text-base-content"
+        >
+          {{ isExpanded ? t('agent.collapseDetails') : t('agent.expandDetails') }}
+        </button>
+        <div v-if="isExpanded" class="mt-2 space-y-3">
+          <!-- Tool Arguments -->
+          <div v-if="hasToolArgs" class="tool-args-section">
+            <div class="text-xs text-base-content/60 mb-1 font-medium">
+              📥 {{ t('agent.inputParameters') }}:
+            </div>
+            <pre
+              class="tool-args p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-48 overflow-y-auto"
+              >{{ formattedArgs }}</pre
+            >
+          </div>
+          <!-- Tool Result -->
+          <div v-if="message.content" class="tool-result-section">
+            <div class="text-xs text-base-content/60 mb-1 font-medium">
+              📤 {{ t('agent.executionResult') }}:
+            </div>
+            <pre
+              class="tool-result p-2 bg-base-300 rounded text-xs font-mono overflow-x-auto text-base-content/70 max-h-64 overflow-y-auto whitespace-pre-wrap"
+              >{{ formattedStandaloneToolResult }}</pre
+            >
+          </div>
+          <ToolRuntimeMeta :result="message.content" class="mt-2" />
+          <StoredArtifactPanel
+            v-if="standaloneStoredArtifactViews.length > 0"
+            :artifacts="standaloneStoredArtifactViews"
+          />
+          <!-- Tool Call ID -->
+          <div v-if="message.metadata?.tool_call_id" class="text-xs text-base-content/50">
+            {{ t('agent.toolCallId') }}:
+            <code class="font-mono">{{ message.metadata.tool_call_id }}</code>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="showMessageActions"
+        class="message-action-toolbar mt-3 justify-start border-t border-base-300/40 pt-2"
+        :class="sessionStats ? 'mt-1 border-t-0 pt-1' : ''"
+      >
+        <div class="flex items-center gap-1">
+          <button
+            v-if="message.type === 'user'"
+            @click="handleEdit"
+            class="action-icon-button"
+            :title="t('agent.editMessage')"
+          >
+            <i class="fas fa-edit"></i>
+          </button>
+          <button
+            @click="handleCopy"
+            class="action-icon-button"
+            :title="t('agent.copyMessage')"
+          >
+            <i :class="['fas', copySuccess ? 'fa-check text-success' : 'fa-copy']"></i>
+          </button>
+          <button
+            v-if="message.type === 'user'"
+            @click="handleResend"
+            class="action-icon-button"
+            :title="t('agent.resendMessage')"
+          >
+            <i class="fas fa-redo"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, defineAsyncComponent, nextTick, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { save } from '@tauri-apps/plugin-dialog'
+import { writeTextFile } from '@tauri-apps/plugin-fs'
+import { invoke } from '@tauri-apps/api/core'
+import type { AgentMessage } from '@/types/agent'
+import {
+  normalizeParallelRun,
+  type ParallelRunState,
+} from '@/composables/agentParallelEventSupport'
+import type {
+  ReferencedAsset,
+  ReferencedConversationMessage,
+  ReferencedFile,
+  ReferencedTraffic,
+} from '@/types/agentReferences'
+import { getMessageTypeName } from '@/types/agent'
+import { formatJsonStringIfPossible, formatJsonValueIfPossible } from '@/utils/jsonFormatting'
+import MarkdownRenderer from './MarkdownRenderer.vue'
+import ThinkingMessageBlock from './ThinkingMessageBlock.vue'
+import {
+  formatSessionDuration,
+  formatTokenRate,
+} from './agentSessionStatsSupport'
+import {
+  shouldShowDefaultToolCallPanel,
+  shouldShowRegularMessageBlock,
+} from './messageVisibilitySupport'
+import { buildStoredArtifactViews } from './storedArtifactSupport'
+import {
+  isFileToolName,
+  isSearchToolName,
+  shouldRenderSpecializedShellTool,
+} from './toolRenderSupport'
+
+const { t } = useI18n()
+
+const AskUserQuestionToolResult = defineAsyncComponent(() => import('./AskUserQuestionToolResult.vue'))
+const FileToolResult = defineAsyncComponent(() => import('./FileToolResult.vue'))
+const MemoryToolResult = defineAsyncComponent(() => import('./MemoryToolResult.vue'))
+const ParallelModelResultPanel = defineAsyncComponent(() => import('./ParallelModelResultPanel.vue'))
+const SearchToolResult = defineAsyncComponent(() => import('./SearchToolResult.vue'))
+const ShellToolResult = defineAsyncComponent(() => import('./ShellToolResult.vue'))
+const StoredArtifactPanel = defineAsyncComponent(() => import('./StoredArtifactPanel.vue'))
+const TeamMessageAttribution = defineAsyncComponent(() => import('./TeamMessageAttribution.vue'))
+const ToolCallMessagePanel = defineAsyncComponent(() => import('./ToolCallMessagePanel.vue'))
+const ToolRuntimeMeta = defineAsyncComponent(() => import('./ToolRuntimeMeta.vue'))
+const WebSearchToolResult = defineAsyncComponent(() => import('./WebSearchToolResult.vue'))
+
+const props = defineProps<{
+  message: AgentMessage
+  isExecuting?: boolean
+  showActions?: boolean
+  showSessionStats?: boolean
+}>()
+
+const emit = defineEmits<{
+  (e: 'resend', message: AgentMessage): void
+  (e: 'edit', message: AgentMessage, newContent: string): void
+  (e: 'focusTeamTask', taskId: string): void
+  (e: 'heightChanged'): void
+  (e: 'renderHtml', htmlContent: string): void
+}>()
+
+const isExpanded = ref(false)
+const copySuccess = ref(false)
+
+// Edit mode
+const isEditing = ref(false)
+const editedContent = ref('')
+const editTextareaRef = ref<HTMLTextAreaElement | null>(null)
+
+// Summary panel collapse state
+const isSummaryPanelExpanded = ref(false)
+
+const toggleDetails = () => {
+  isExpanded.value = !isExpanded.value
+}
+
+const toggleSummaryPanel = () => {
+  isSummaryPanelExpanded.value = !isSummaryPanelExpanded.value
+}
+
+// 复制消息内容
+const handleCopy = async () => {
+  try {
+    await navigator.clipboard.writeText(normalizedMessageContent.value)
+    copySuccess.value = true
+    setTimeout(() => {
+      copySuccess.value = false
+    }, 2000)
+  } catch (err) {
+    console.error('Failed to copy:', err)
+  }
+}
+
+// 重新发送消息
+const handleResend = () => {
+  emit('resend', props.message)
+}
+
+// 编辑消息
+const handleEdit = () => {
+  isEditing.value = true
+  editedContent.value = props.message.content
+  // Focus textarea after mount
+  nextTick(() => {
+    if (editTextareaRef.value) {
+      editTextareaRef.value.focus()
+      // Auto-resize textarea
+      autoResizeTextarea()
+      // Select all text for easy editing
+      editTextareaRef.value.select()
+    }
+  })
+}
+
+// 保存编辑
+const handleSaveEdit = () => {
+  const newContent = editedContent.value.trim()
+  if (!newContent) return
+
+  isEditing.value = false
+  emit('edit', props.message, newContent)
+}
+
+// 取消编辑
+const handleCancelEdit = () => {
+  isEditing.value = false
+  editedContent.value = ''
+}
+
+// Auto-resize textarea
+const autoResizeTextarea = () => {
+  nextTick(() => {
+    const textarea = editTextareaRef.value
+    if (textarea) {
+      textarea.style.height = 'auto'
+      textarea.style.height = Math.min(textarea.scrollHeight, 300) + 'px'
+    }
+  })
+}
+
+// Watch for edited content changes to auto-resize
+watch(editedContent, () => {
+  if (isEditing.value) {
+    autoResizeTextarea()
+  }
+})
+
+// Type name
+const typeName = computed(() => getMessageTypeName(props.message.type))
+
+// RAG信息
+const ragInfo = computed(() => props.message.metadata?.rag_info)
+
+const sessionStats = computed(() => {
+  if (props.showSessionStats !== true) return null
+  if (props.message.type !== 'final') return null
+  return props.message.metadata?.session_stats || null
+})
+
+const sessionDuration = computed(() => formatSessionDuration(sessionStats.value?.duration_ms))
+
+const sessionFirstResponseDuration = computed(() =>
+  formatSessionDuration(sessionStats.value?.first_response_ms)
+)
+
+const sessionTokenRate = computed(() => {
+  const formatted = formatTokenRate(sessionStats.value?.tokens_per_second)
+  return formatted ? `${formatted} tok/s` : ''
+})
+
+const showMessageActions = computed(() => {
+  if (isEditing.value) return false
+  if (props.message.type === 'user') return true
+  return props.showActions === true && props.message.type === 'final'
+})
+
+// Tool name from metadata
+const toolName = computed(() => props.message.metadata?.tool_name)
+
+// Check if this is a skills tool
+const isSkillsTool = computed(() => {
+  const name = props.message.metadata?.tool_name?.toLowerCase()
+  return name === 'skills'
+})
+
+const skillsAction = computed(() => {
+  const action = props.message.metadata?.tool_args?.action
+  return typeof action === 'string' ? action.toLowerCase() : ''
+})
+
+const isSkillsCardAction = computed(() => {
+  return skillsAction.value === 'read_skill_file'
+})
+
+const isSkillsToolCard = computed(() => {
+  return props.message.type === 'tool_call' && isSkillsTool.value && isSkillsCardAction.value
+})
+
+const skillsCardTitle = computed(() => {
+  if (toolStatus.value === 'failed') {
+    return 'Skill file load failed'
+  }
+  if (skillsAction.value === 'load') {
+    return t('agent.skillLoadedTitle')
+  }
+  return 'Skill file loaded'
+})
+
+const skillsCardContainerClass = computed(() => {
+  if (toolStatus.value === 'failed') return 'bg-error/10 border-error'
+  return 'bg-success/10 border-success'
+})
+
+const skillsCardHeaderClass = computed(() => {
+  if (toolStatus.value === 'failed') return 'bg-error/20 border-error/20'
+  return 'bg-success/20 border-success/20'
+})
+
+const skillsCardIconClass = computed(() => {
+  if (toolStatus.value === 'failed') return 'bg-error'
+  return 'bg-success'
+})
+
+const skillsCardTitleClass = computed(() => {
+  if (toolStatus.value === 'failed') return 'text-error'
+  return 'text-success'
+})
+
+const skillsCardTarget = computed(() => {
+  const args = props.message.metadata?.tool_args || {}
+  if (skillsAction.value === 'load') {
+    if (args.skill_id) return String(args.skill_id)
+    return ''
+  }
+  const parts: string[] = []
+  if (args.skill_id) parts.push(String(args.skill_id))
+  if (args.relative_path) parts.push(String(args.relative_path))
+  if (args.path) parts.push(String(args.path))
+  return parts.join(' / ')
+})
+
+// Check if this is a shell tool
+const shouldShowSpecializedShellTool = computed(() => {
+  return shouldRenderSpecializedShellTool({
+    toolName: props.message.metadata?.tool_name,
+    result: props.message.metadata?.tool_result,
+    error: props.message.metadata?.error,
+  })
+})
+
+const isAskUserQuestionTool = computed(() => {
+  const name = props.message.metadata?.tool_name?.toLowerCase()
+  return name === 'ask_user_question'
+})
+
+const isFileTool = computed(() => {
+  return (
+    (props.message.type === 'tool_call' || props.message.type === 'tool_result') &&
+    isFileToolName(props.message.metadata?.tool_name)
+  )
+})
+
+const isSearchTool = computed(() => {
+  return (
+    (props.message.type === 'tool_call' || props.message.type === 'tool_result') &&
+    isSearchToolName(props.message.metadata?.tool_name)
+  )
+})
+
+const isWebSearchTool = computed(() => {
+  const name = props.message.metadata?.tool_name?.toLowerCase()
+  return (
+    (props.message.type === 'tool_call' || props.message.type === 'tool_result') &&
+    name === 'web_search'
+  )
+})
+
+const isMemoryTool = computed(() => {
+  const name = props.message.metadata?.tool_name?.toLowerCase()
+  return (
+    (props.message.type === 'tool_call' || props.message.type === 'tool_result') &&
+    name === 'memory'
+  )
+})
+
+const isFileMutationTool = computed(() => {
+  const name = props.message.metadata?.tool_name?.toLowerCase()
+  return name === 'file_edit' || name === 'file_write'
+})
+
+const fileVerificationStatus = computed(() => {
+  if (!isFileMutationTool.value) return ''
+  return props.message.metadata?.file_verification_status || ''
+})
+
+const fileVerificationText = computed(() => {
+  switch (fileVerificationStatus.value) {
+    case 'verified':
+      return 'Readback verified'
+    case 'pending':
+      return 'Readback pending'
+    case 'failed':
+      return 'Write failed'
+    default:
+      return ''
+  }
+})
+
+const fileVerificationClass = computed(() => {
+  switch (fileVerificationStatus.value) {
+    case 'verified':
+      return 'bg-success/10 text-success'
+    case 'pending':
+      return 'bg-warning/10 text-warning'
+    case 'failed':
+      return 'bg-error/10 text-error'
+    default:
+      return 'bg-base-300/20 text-base-content/60'
+  }
+})
+
+// Check if this is a segment summary message (sliding window)
+const isSegmentSummary = computed(() => {
+  return props.message.type === 'system' && props.message.metadata?.kind === 'segment_summary'
+})
+
+// Check if this is a global summary message (long-term memory)
+const isGlobalSummary = computed(() => {
+  return props.message.type === 'system' && props.message.metadata?.kind === 'global_summary'
+})
+
+// Check if this is a skill loaded system message
+const isSkillLoaded = computed(() => {
+  return props.message.type === 'system' && props.message.metadata?.kind === 'skill_loaded'
+})
+
+const isToolsActivated = computed(() => {
+  return props.message.type === 'system' && props.message.metadata?.kind === 'tools_activated'
+})
+
+const isParallelModelExecution = computed(() => {
+  return props.message.type === 'system' && props.message.metadata?.kind === 'parallel_model_execution'
+})
+
+const parallelRun = ref<ParallelRunState | null>(null)
+
+const loadParallelRun = async () => {
+  if (!isParallelModelExecution.value) {
+    parallelRun.value = null
+    return
+  }
+  const metadata = props.message.metadata as Record<string, any> | undefined
+  const embedded = metadata?.parallel_run
+  if (embedded) {
+    parallelRun.value = normalizeParallelRun(embedded)
+    return
+  }
+  const runId = String(metadata?.parallel_run_id || '').trim()
+  if (!runId) {
+    parallelRun.value = null
+    return
+  }
+  try {
+    const detail = await invoke('get_ai_parallel_run', {
+      request: {
+        parallel_run_id: runId,
+      },
+    })
+    parallelRun.value = normalizeParallelRun(detail)
+  } catch (error) {
+    parallelRun.value = normalizeParallelRun({
+      id: runId,
+      status: 'failed',
+      judge_status: 'not_requested',
+      items: [],
+    })
+  }
+}
+
+watch(
+  () => props.message.metadata,
+  () => {
+    void loadParallelRun()
+  },
+  { immediate: true, deep: true },
+)
+
+const isTeamDependencyReady = computed(() => {
+  return props.message.type === 'system' && props.message.metadata?.kind === 'team_dependency_ready'
+})
+
+const isAgentTaskUpdate = computed(() => {
+  return props.message.type === 'system' && props.message.metadata?.kind === 'agent_task_update'
+})
+
+const teamDependencyReadyTaskId = computed(() => {
+  const value = props.message.metadata?.team_task_record_id
+  return typeof value === 'string' && value.trim() ? value.trim() : ''
+})
+
+const handleFocusTeamTask = () => {
+  if (!teamDependencyReadyTaskId.value) return
+  emit('focusTeamTask', teamDependencyReadyTaskId.value)
+}
+
+const toolsActivatedIds = computed<string[]>(() => {
+  return Array.isArray(props.message.metadata?.tool_ids)
+    ? props.message.metadata.tool_ids
+        .map((item: unknown) => (typeof item === 'string' ? item.trim() : ''))
+        .filter((item: string) => item.length > 0)
+    : []
+})
+
+const toolsActivatedCount = computed(() => {
+  return (
+    toolsActivatedIds.value.length ||
+    (Array.isArray(props.message.metadata?.tools) ? props.message.metadata.tools.length : 0)
+  )
+})
+
+const toolsActivatedPreview = computed(() => {
+  if (toolsActivatedIds.value.length > 0) {
+    return toolsActivatedIds.value.join(', ')
+  }
+  return String(props.message.metadata?.tools_preview || props.message.content || '').trim()
+})
+
+const toolsActivatedActiveSetPreview = computed(() => {
+  if (Array.isArray(props.message.metadata?.tools)) {
+    return props.message.metadata.tools
+      .map((item: unknown) => (typeof item === 'string' ? item.trim() : ''))
+      .filter((item: string) => item.length > 0)
+      .join(', ')
+  }
+  return ''
+})
+
+// Check if this is a Tenth Man Critique message
+const isTenthManCritique = computed(() => {
+  return (
+    props.message.type === 'system' &&
+    (props.message.metadata?.kind === 'tenth_man_critique' ||
+      props.message.metadata?.kind === 'tenth_man_intervention' ||
+      props.message.metadata?.kind === 'tenth_man_warning')
+  )
+})
+
+const readTeamMetaString = (key: string): string => {
+  const metadata = props.message.metadata as Record<string, unknown> | undefined
+  const value = metadata?.[key]
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+const normalizedMessageContent = computed(() => {
+  return props.message.content || ''
+})
+
+const isThinkingMessage = computed(() => props.message.type === 'thinking')
+
+const thinkingMessageStatus = computed<'streaming' | 'complete'>(() => {
+  const metadata = props.message.metadata as any
+  return metadata?.status === 'streaming' ? 'streaming' : 'complete'
+})
+
+const isLightweightStreamingRender = computed(() => {
+  const metadata = props.message.metadata as Record<string, any> | undefined
+  return metadata?.kind === 'team_member_output' && metadata?.team_streaming === true
+})
+
+const lightweightStreamingContent = computed(() => {
+  const content = normalizedMessageContent.value || ''
+  return `${content}▍`
+})
+
+const teamSpeakerName = computed(() => {
+  return (
+    readTeamMetaString('team_member_name') ||
+    readTeamMetaString('member_name') ||
+    readTeamMetaString('assignee_agent_name') ||
+    readTeamMetaString('team_member_id')
+  )
+})
+
+const teamSpeakerRole = computed(() => {
+  const role =
+    readTeamMetaString('team_member_role') ||
+    readTeamMetaString('team_role') ||
+    readTeamMetaString('role')
+  const normalized = role.toLowerCase()
+  if (normalized === 'assistant' || normalized === 'user' || normalized === 'system') {
+    return ''
+  }
+  return role
+})
+
+const teamSpeakerLabel = computed(() => {
+  return teamSpeakerName.value || teamSpeakerRole.value || 'Team'
+})
+
+const isTeamMessage = computed(() => {
+  const kind = props.message.metadata?.kind
+  if (kind === 'team_bridge' || kind === 'team_member_output') {
+    return true
+  }
+  return (
+    readTeamMetaString('team_session_id').length > 0 &&
+    (
+      readTeamMetaString('team_member_name').length > 0 ||
+      readTeamMetaString('team_member_id').length > 0 ||
+      readTeamMetaString('assignee_agent_name').length > 0
+    )
+  )
+})
+
+const showTeamAttribution = computed(() => {
+  return isTeamMessage.value && teamSpeakerLabel.value.trim().length > 0
+})
+
+// Format number with commas
+const formatNumber = (num: number | undefined) => {
+  if (num === undefined) return '0'
+  return num.toLocaleString()
+}
+
+const PREVIEW_MAX_DEPTH = 6
+const PREVIEW_MAX_ITEMS = 1000
+const PREVIEW_MAX_STRING = 4000
+const PREVIEW_MAX_CHARS_EXPANDED = 120000
+
+const truncatePreviewText = (text: string, maxChars: number) => {
+  if (text.length <= maxChars) return text
+  return `${text.slice(0, maxChars)}... [truncated ${text.length - maxChars} chars]`
+}
+
+const normalizeForPreview = (value: any, depth = 0, budget = { nodes: 0 }): any => {
+  if (value === null || value === undefined) return value
+  if (budget.nodes >= PREVIEW_MAX_ITEMS) return '[Truncated: too many nodes]'
+  budget.nodes += 1
+
+  if (typeof value === 'string') {
+    if (value.length > PREVIEW_MAX_STRING) {
+      return `${value.slice(0, PREVIEW_MAX_STRING)}... [truncated ${value.length - PREVIEW_MAX_STRING} chars]`
+    }
+    return value
+  }
+
+  if (typeof value !== 'object') return value
+  if (depth >= PREVIEW_MAX_DEPTH) return '[Truncated: max depth reached]'
+
+  if (Array.isArray(value)) {
+    return value.map(item => normalizeForPreview(item, depth + 1, budget))
+  }
+
+  const out: Record<string, any> = {}
+  for (const key of Object.keys(value)) {
+    out[key] = normalizeForPreview(value[key], depth + 1, budget)
+  }
+  return out
+}
+
+const stringifyPreview = (value: any, maxChars: number) => {
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'string') {
+    return truncatePreviewText(value, maxChars)
+  }
+
+  try {
+    const normalized = normalizeForPreview(value)
+    const text = JSON.stringify(normalized, null, 2)
+    if (!text) return ''
+    return truncatePreviewText(text, maxChars)
+  } catch {
+    return String(value)
+  }
+}
+
+const contentMayContainTable = (content: string) => {
+  return (
+    content.includes('<table') ||
+    content.includes('```html') ||
+    (content.includes('|') && content.includes('\n'))
+  )
+}
+
+const isMarkdownTableSeparator = (line: string) => {
+  const trimmed = line.trim()
+  return /^\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?$/.test(trimmed)
+}
+
+const parseMarkdownTableRow = (line: string): string[] => {
+  const trimmed = line.trim()
+  const withoutEdges = trimmed.replace(/^\|/, '').replace(/\|$/, '')
+  return withoutEdges.split('|').map(cell => cell.trim())
+}
+
+const extractHtmlTableData = (html: string): string[][] => {
+  try {
+    const parser = new DOMParser()
+    const doc = parser.parseFromString(html, 'text/html')
+    const table = doc.querySelector('table')
+    if (!table) return []
+    const rows = Array.from(table.querySelectorAll('tr'))
+    return rows.map(row => {
+      const cells = Array.from(row.querySelectorAll('th, td'))
+      return cells.map(cell => (cell.textContent || '').trim())
+    })
+  } catch {
+    return []
+  }
+}
+
+const extractHtmlBlock = (content: string): string | null => {
+  const match = content.match(/```html\s*([\s\S]*?)```/i)
+  if (match && match[1]) return match[1].trim()
+  return null
+}
+
+// Status icon
+const statusIcon = computed(() => {
+  if (props.message.type === 'tool_result') {
+    return props.message.metadata?.success ? '✓' : '✗'
+  }
+  return null
+})
+
+// Status class for icon color
+const statusClass = computed(() => {
+  if (props.message.type === 'tool_result') {
+    return props.message.metadata?.success ? 'text-success' : 'text-error'
+  }
+  return ''
+})
+
+// Tool status from metadata
+const toolStatus = computed(() => props.message.metadata?.status)
+
+// Tool status display class
+const toolStatusClass = computed(() => {
+  switch (toolStatus.value) {
+    case 'running':
+      return 'bg-warning/20 text-warning'
+    case 'completed':
+      return 'bg-success/20 text-success'
+    case 'failed':
+      return 'bg-error/20 text-error'
+    case 'pending':
+      return 'bg-base-300 text-base-content/60'
+    default:
+      return ''
+  }
+})
+
+// Tool status display text
+const toolStatusText = computed(() => {
+  switch (toolStatus.value) {
+    case 'running':
+      return `⏳ ${t('agent.statusRunning')}`
+    case 'completed':
+      return `✓ ${t('agent.statusCompleted')}`
+    case 'failed':
+      return `✗ ${t('agent.statusFailed')}`
+    case 'pending':
+      return t('agent.statusPending')
+    default:
+      return ''
+  }
+})
+
+// Duration
+const duration = computed(() => {
+  const ms = props.message.metadata?.duration_ms
+  if (ms) {
+    return `${(ms / 1000).toFixed(1)}s`
+  }
+  return null
+})
+
+// Whether to show header
+const showHeader = computed(() => {
+  return ['tool_result', 'progress'].includes(props.message.type)
+})
+
+// Has tool args
+const hasToolArgs = computed(() => {
+  return (
+    props.message.metadata?.tool_args && Object.keys(props.message.metadata.tool_args).length > 0
+  )
+})
+
+// Has tool result (合并显示的结果)
+const hasToolResult = computed(() => {
+  return !!props.message.metadata?.tool_result
+})
+
+// Check if tool_call message has any content to display
+const hasToolCallContent = computed(() => {
+  return shouldShowDefaultToolCallPanel({
+    messageType: props.message.type,
+    hasContent: !!props.message.content,
+    hasToolArgs: hasToolArgs.value,
+    hasToolResult: hasToolResult.value,
+    hasToolCallId: !!props.message.metadata?.tool_call_id,
+    isSkillsTool: isSkillsTool.value,
+    isAskUserQuestionTool: isAskUserQuestionTool.value,
+    isWebSearchTool: isWebSearchTool.value,
+  })
+})
+
+// Check if regular message has any content to display
+const hasRegularMessageContent = computed(() => {
+  return shouldShowRegularMessageBlock({
+    messageType: props.message.type,
+    hasContent: !!props.message.content && props.message.content.trim().length > 0,
+    hasToolArgs: hasToolArgs.value,
+    isAgentTaskUpdate: isAgentTaskUpdate.value,
+  })
+})
+
+// Formatted args
+const formattedArgs = computed(() => {
+  return stringifyPreview(props.message.metadata?.tool_args, PREVIEW_MAX_CHARS_EXPANDED)
+})
+
+const formattedStandaloneToolResult = computed(() => {
+  const content = props.message.content || ''
+  return formatJsonValueIfPossible(content) || content
+})
+
+const standaloneStoredArtifactViews = computed(() =>
+  buildStoredArtifactViews(props.message.content, props.message.metadata?.tracked_artifacts)
+)
+
+// Type-specific class
+const typeClass = computed(() => {
+  switch (props.message.type) {
+    case 'thinking':
+      return 'type-thinking bg-info/10 border-l-[3px] border-info'
+    case 'planning':
+      return 'type-planning bg-primary/10 border-l-[3px] border-primary'
+    case 'tool_call':
+      return 'type-tool_call bg-base-200 border-l-[3px] border-warning'
+    case 'tool_result':
+      return 'type-tool_result bg-base-200 border-l-[3px] border-success'
+    case 'progress':
+      return 'type-progress bg-base-200 border-l-[3px] border-base-content/30'
+    case 'error':
+      return 'type-error bg-error/10 border-l-[3px] border-error'
+    case 'final':
+      return 'type-final bg-success/5 border-l-[3px] border-success'
+    default:
+      return 'bg-base-200'
+  }
+})
+
+// Get document attachments from user message metadata
+const documentAttachments = computed(() => {
+  if (props.message.type !== 'user') return []
+  return props.message.metadata?.document_attachments || []
+})
+
+// Get image attachments from user message metadata
+const imageAttachments = computed(() => {
+  if (props.message.type !== 'user') return []
+  const attachments = props.message.metadata?.image_attachments
+  if (!attachments) return []
+
+  // Handle both array format and single object format
+  if (Array.isArray(attachments)) {
+    return attachments.map((att: any) => {
+      // Handle MessageAttachment::Image format (with type discriminator)
+      if (att.type === 'image') {
+        return att
+      }
+      // Handle legacy format (has 'image' property)
+      if (att.image) {
+        return att.image
+      }
+      // Handle direct ImageAttachment format
+      return att
+    })
+  }
+
+  return []
+})
+
+const referencedFiles = computed<ReferencedFile[]>(() => {
+  if (props.message.type !== 'user') return []
+  return Array.isArray(props.message.metadata?.referenced_files)
+    ? props.message.metadata.referenced_files
+    : []
+})
+
+const referencedMessages = computed<ReferencedConversationMessage[]>(() => {
+  if (props.message.type !== 'user') return []
+  return Array.isArray(props.message.metadata?.referenced_messages)
+    ? props.message.metadata.referenced_messages
+    : []
+})
+
+const referencedAssets = computed<ReferencedAsset[]>(() => {
+  if (props.message.type !== 'user') return []
+  return Array.isArray(props.message.metadata?.referenced_assets)
+    ? props.message.metadata.referenced_assets
+    : []
+})
+
+const referencedTraffic = computed<ReferencedTraffic[]>(() => {
+  if (props.message.type !== 'user') return []
+  return Array.isArray(props.message.metadata?.referenced_traffic)
+    ? props.message.metadata.referenced_traffic
+    : []
+})
+
+const getTrafficPath = (url: string) => {
+  try {
+    const parsed = new URL(url)
+    return `${parsed.pathname}${parsed.search}`
+  } catch {
+    const marker = url.indexOf('://')
+    const normalized = marker >= 0 ? url.slice(marker + 3) : url
+    const slashIndex = normalized.indexOf('/')
+    return slashIndex >= 0 ? normalized.slice(slashIndex) : '/'
+  }
+}
+
+// Get image preview URL from base64 data
+const getImagePreviewUrl = (img: any): string => {
+  try {
+    // Handle new ImageAttachment structure
+    if (img?.data) {
+      const mediaTypeRaw: string | undefined = img.media_type
+      const mime = toMimeType(mediaTypeRaw)
+
+      // Handle base64 data
+      if (img.data.type === 'base64' && img.data.data) {
+        return `data:${mime};base64,${img.data.data}`
+      }
+
+      // Handle URL
+      if (img.data.type === 'url' && img.data.url) {
+        return img.data.url
+      }
+    }
+
+    // Handle legacy format (direct base64 string in data field)
+    const mediaTypeRaw: string | undefined = img?.media_type
+    const mime = toMimeType(mediaTypeRaw)
+    const dataField = img?.data
+    const base64 = typeof dataField === 'string' ? dataField : dataField?.data
+    if (!base64) return ''
+    return `data:${mime};base64,${base64}`
+  } catch (e) {
+    console.error('[MessageBlock] Failed to construct image preview:', e, img)
+    return ''
+  }
+}
+
+// Convert media type enum to MIME type
+const toMimeType = (mediaType?: string): string => {
+  if (!mediaType) return 'image/jpeg'
+  const t = mediaType.toLowerCase()
+  if (t === 'jpeg' || t === 'jpg') return 'image/jpeg'
+  if (t === 'png') return 'image/png'
+  if (t === 'gif') return 'image/gif'
+  if (t === 'webp') return 'image/webp'
+  return t.startsWith('image/') ? t : `image/${t}`
+}
+
+// Get filename from image attachment
+const getImageFilename = (img: any): string => {
+  return img?.filename || 'attachment'
+}
+
+// Open image preview (simple implementation - can be enhanced)
+const openImagePreview = (url: string) => {
+  if (!url) return
+  // Open in new window
+  window.open(url, '_blank')
+}
+
+// Format document file size
+const formatDocSize = (bytes: number): string => {
+  if (!bytes || bytes === 0) return '0 B'
+  if (bytes < 1024) return bytes + ' B'
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+const looksLikeHtmlDocument = (text: string) => {
+  return /<!doctype\s+html|<html[\s>]|<head[\s>]|<body[\s>]/i.test(text)
+}
+
+const wrapHtmlAsCodeBlock = (text: string, cursor: string) => {
+  if (text.includes('```') || !looksLikeHtmlDocument(text)) return text + cursor
+  return `\`\`\`html\n${text}${cursor}\n\`\`\``
+}
+
+// Format content based on message type
+const formattedContent = computed(() => {
+  const { type, metadata } = props.message
+  const content = normalizedMessageContent.value
+  const cursor = props.isExecuting ? ' ▍' : ''
+
+  switch (type) {
+    case 'thinking':
+      return `> **Thinking**\n>\n> ${content.replace(/\n/g, '\n> ')}${cursor}`
+
+    case 'planning':
+      return `**Planning**\n\n${content}${cursor}`
+
+    case 'tool_result': {
+      // Wrap result in code block if not already markdown
+      const formattedJson = formatJsonStringIfPossible(content)
+      let result = formattedJson ? `\`\`\`json\n${formattedJson}\n\`\`\`` : content
+      if (!formattedJson && !content.includes('```') && !content.includes('#')) {
+        result = `\`\`\`\n${content}\n\`\`\``
+      }
+      return result + cursor
+    }
+
+    case 'progress': {
+      const step = metadata?.step_index ?? 0
+      const total = metadata?.total_steps ?? 0
+      return `**Progress** Step ${step}/${total}\n\n${content}${cursor}`
+    }
+
+    case 'error':
+      return `> **Error**\n>\n> ${content}`
+
+    case 'final':
+      return wrapHtmlAsCodeBlock(content, cursor)
+
+    default:
+      return wrapHtmlAsCodeBlock(content, cursor)
+  }
+})
+
+const showTableDownload = computed(() => {
+  if (props.message.type === 'user') return false
+  if (props.isExecuting) return false
+  return parsedTables.value.length > 0
+})
+
+const escapeCsvCell = (value: string) => {
+  if (value.includes('"')) {
+    value = value.replace(/"/g, '""')
+  }
+  if (/[",\n\r]/.test(value)) {
+    return `"${value}"`
+  }
+  return value
+}
+
+const buildCsvContent = (rows: string[][]) => {
+  return rows.map(row => row.map(cell => escapeCsvCell(cell ?? '')).join(',')).join('\n')
+}
+
+const downloadTableAsCsv = async (data: string[][]) => {
+  if (data.length === 0) return
+
+  const csv = buildCsvContent(data)
+  const defaultFilename = `table-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`
+
+  try {
+    // Use Tauri save dialog
+    const filePath = await save({
+      defaultPath: defaultFilename,
+      filters: [{ name: 'CSV', extensions: ['csv'] }],
+    })
+
+    if (filePath) {
+      await writeTextFile(filePath, csv)
+      console.log('[MessageBlock] Table saved to:', filePath)
+    }
+  } catch (e) {
+    console.error('[MessageBlock] Failed to save table:', e)
+    // Fallback to browser download
+    try {
+      const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' })
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = defaultFilename
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (fallbackError) {
+      console.error('[MessageBlock] Fallback download also failed:', fallbackError)
+    }
+  }
+}
+
+// Extract all tables from content
+const extractAllTablesFromContent = (content: string): string[][][] => {
+  if (!content) return []
+  if (!contentMayContainTable(content)) return []
+  const tables: string[][][] = []
+
+  // Extract HTML tables
+  const htmlBlock = extractHtmlBlock(content)
+  const htmlCandidate = htmlBlock || content
+  const htmlTable = extractHtmlTableData(htmlCandidate)
+  if (htmlTable.length > 0) {
+    tables.push(htmlTable)
+  }
+
+  // Extract Markdown tables
+  const lines = content.split('\n')
+  for (let i = 0; i < lines.length - 1; i += 1) {
+    const headerLine = lines[i]
+    const separatorLine = lines[i + 1]
+    if (!headerLine.includes('|') || !isMarkdownTableSeparator(separatorLine)) continue
+
+    const header = parseMarkdownTableRow(headerLine)
+    const rows: string[][] = []
+    let j = i + 2
+    while (j < lines.length && lines[j].includes('|')) {
+      rows.push(parseMarkdownTableRow(lines[j]))
+      j += 1
+    }
+    const tableData = [header, ...rows].filter(row => row.length > 0)
+    if (tableData.length > 0) {
+      tables.push(tableData)
+    }
+    i = j - 1 // Skip processed lines
+  }
+
+  return tables
+}
+
+const parsedTables = computed(() => {
+  if (props.message.type === 'user') return []
+  if (props.isExecuting) return []
+  return extractAllTablesFromContent(props.message.content || '')
+})
+
+const handleDownloadTable = (tableIndex: number) => {
+  const tables = parsedTables.value
+  if (tableIndex >= 0 && tableIndex < tables.length) {
+    downloadTableAsCsv(tables[tableIndex])
+  } else if (tables.length > 0) {
+    // Fallback to first table
+    downloadTableAsCsv(tables[0])
+  }
+}
+</script>
+
+<style scoped>
+.tool-args {
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
+.message-action-toolbar {
+  display: flex;
+  align-items: center;
+}
+
+.action-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 1.5rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: rgb(var(--bc) / 0.55);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.action-icon-button:hover,
+.action-icon-button:focus-visible {
+  color: rgb(var(--bc) / 0.9);
+  outline: none;
+}
+
+/* Image attachments styles */
+.image-attachments {
+  position: relative;
+}
+
+.image-attachment {
+  position: relative;
+  overflow: hidden;
+}
+
+.image-attachment img {
+  display: block;
+}
+
+.action-icon-button i {
+  font-size: 0.75rem;
+}
+
+/* Edit mode styles */
+.edit-mode textarea {
+  transition: border-color 0.2s;
+  min-height: 4rem;
+}
+
+.edit-mode textarea:focus {
+  box-shadow: 0 0 0 3px rgba(var(--p), 0.1);
+}
+
+/* Tool panel styles */
+.tool-call-panel {
+  transition: all 0.2s ease;
+}
+
+.tool-panel-header {
+  user-select: none;
+}
+
+.tool-panel-header:active {
+  transform: scale(0.99);
+}
+
+.tool-panel-content {
+  animation: slideDown 0.2s ease-out;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    max-height: 0;
+  }
+  to {
+    opacity: 1;
+    max-height: 1000px;
+  }
+}
+
+/* Scrollbar styles for tool args and result */
+.tool-panel-content > div > div::-webkit-scrollbar {
+  width: 8px;
+}
+
+.tool-panel-content > div > div::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.tool-panel-content > div > div::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 4px;
+}
+
+.tool-panel-content > div > div::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}
+</style>

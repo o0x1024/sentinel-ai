@@ -1,0 +1,330 @@
+export default {
+  // Page title and description
+  serversTitle: 'Tool Management',
+  serversDescription: 'Manage built-in tools, workflows, plugins, and MCP servers',
+
+  // Tabs
+  builtinTools: 'Built-in Tools',
+  workflowTools: 'Workflow Tools',
+  pluginTools: 'Plugin Tools',
+  mcpServers: 'MCP Servers',
+  marketplace: 'MCP Marketplace',
+  skills: 'Skills',
+  skillsDescription: 'Manage local SKILL.md files and index',
+  skillsInstallFromGithub: 'Install from GitHub',
+  skillsImportFile: 'Import File',
+  skillsImportFolder: 'Import Folder',
+  skillsInstallHistory: 'Install History',
+  skillsInstallHistoryEmpty: 'No install history yet.',
+  skillsInstallSelect: 'Select Skills to Install',
+  skillsInstallSelectAll: 'Select all',
+  skillsInstallSelectedCount: '{selected} / {total} selected',
+  skillsInstallNoCandidates: 'No skills found in source.',
+  skillsInstallConfirm: 'Install',
+  skillsGitUrl: 'Git URL',
+  skillsGitUrlPlaceholder: 'https://github.com/owner/repo',
+  skillsGitResolve: 'Fetch Skills',
+  skillsInstallSuccess: 'Skills installed successfully',
+  skillsInstallFailed: 'Failed to install skills',
+  skillsImportFailed: 'Failed to import skills',
+  skillsInstallHistoryDeleteConfirm: 'Delete this install record?',
+  skillsInstallHistoryDeleted: 'Install record deleted',
+  skillsInstallHistoryDeleteFailed: 'Failed to delete install record',
+  skillsEnabledLabel: 'Skills Tool',
+  skillsCardView: 'Card',
+  skillsListView: 'List',
+  skillsDisabledWarning: 'Skills are disabled. Enable the toggle to manage or use skills.',
+  skillsDropInstallHint: 'Drop a skill file or folder here to install',
+  skillsDropMultipleHint: 'Multiple items detected. Installing from the first dropped path.',
+  skillsInstalledTitle: 'Installed Skills',
+  skillsInstalledEmpty: 'No skills installed.',
+
+  // Management dropdown
+  management: 'Management',
+  cleanupDuplicates: 'Cleanup Duplicate Servers',
+
+  // Edit modes
+  formEdit: 'Form Edit',
+  jsonEdit: 'JSON Edit',
+
+  // Transport types
+  transportTypes: {
+    stdio: 'Standard Input/Output (stdio)',
+    sse: 'Server-Sent Events (sse)',
+    streamableHttp: 'Streamable HTTP (streamableHttp)'
+  },
+
+  // JSON edit warning
+  jsonEditWarning: 'Directly edit JSON configuration, please ensure the format is correct',
+  serverConfigJson: 'Server Configuration (JSON)',
+
+  // Test server modal
+  testServerTitle: 'Test Server Tool',
+  loadingTools: 'Loading server tool list...',
+  selectToolInfo: 'Select a tool to test, you can use default parameters or custom parameters.',
+  selectTool: 'Select Tool',
+  inputParamsDescription: 'Input Parameters Description',
+  paramName: 'Parameter Name',
+  paramType: 'Type',
+  paramRequired: 'Required',
+  paramConstraints: 'Constraints',
+  required: 'Required',
+  testParams: 'Test Parameters (JSON, optional)',
+  testParamsPlaceholder: 'Leave empty to use default parameters, or enter JSON object to override default parameters',
+  testResult: 'Test Result',
+  copyResult: 'Copy Result',
+  toggleJsonView: 'Toggle JSON View',
+  copiedToClipboard: 'Copied to clipboard',
+  copyFailed: 'Copy failed',
+  jsonParseFailed: 'JSON parse failed',
+  runTest: 'Run Test',
+  testing: 'Testing...',
+
+  // Server details modal
+  serverDetails: {
+    title: 'Server Details',
+    general: 'General',
+    tools: 'Tools',
+    paramName: 'Param Name',
+    paramType: 'Param Type',
+    paramRequired: 'Required',
+    paramConstraints: 'Constraints',
+    connectToViewTools: 'Please connect to the server to view its tools.',
+    noTools: 'This server provides no tools.',
+    inputSchema: 'Input Schema',
+    toolName: 'Tool Name',
+    toolDesc: 'Description',
+    toolInput: 'Input',
+    toolOutput: 'Output'
+  },
+
+  // Add server modal
+  addServer: {
+    title: 'Add MCP Server',
+    quickCreate: 'Quick Create',
+    importFromJson: 'Import from JSON',
+    jsonPaste: 'Paste JSON Configuration',
+    import: 'Import',
+    jsonRequired: 'JSON configuration is required',
+    enabled: 'Enabled',
+    command: 'Command',
+    args: 'Arguments',
+    params: 'Parameters',
+    paramsPlaceholder: 'One parameter per line',
+    envVars: 'Environment Variables',
+    timeout: 'Timeout (seconds)',
+    importSuccess: 'Successfully imported server from JSON!',
+    importFailed: 'Failed to import server from JSON',
+    added: 'Added'
+  },
+
+  // Messages
+  updateSuccess: 'Server updated successfully',
+  updateFailed: 'Failed to update server',
+  reconnectWarning: 'but reconnection failed, please reconnect manually',
+  reconnected: ', server has been reconnected',
+  importSuccess: 'Servers imported successfully',
+  importFailed: 'Failed to import servers',
+  jsonFormatError: 'JSON format error, please check syntax',
+  serverNotConnected: 'Current server is not connected, cannot test tools',
+  loadToolsFailed: 'Failed to load server tool list',
+  selectToolFirst: 'Please select a tool to test',
+  paramsJsonError: 'Parameters JSON format error, please check',
+  testingTool: 'Testing tool...',
+  testCompleted: 'Tool test completed',
+  testFailed: 'Tool test failed',
+  cleanupConfirm: 'Are you sure you want to cleanup duplicate MCP server configurations? This will delete duplicate configurations and only keep the latest one.',
+  cleanedDuplicates: 'Cleaned {count} duplicate configurations',
+  noDuplicates: 'No duplicate server configurations found',
+  cleanupFailed: 'Cleanup failed',
+
+  // Plugin management
+  plugins: {
+    allStatus: 'All Status',
+    noReviewPlugins: 'No plugins require review'
+  },
+
+  exploitdb: {
+    title: 'ExploitDB',
+    description: 'Manage the data source behind search_exploit and inspect locally synced exploit entries.',
+    openManager: 'Data',
+    configTitle: 'Data Source',
+    configDescription: 'Configure the local ExploitDB repository path and trigger sync and index refresh manually.',
+    saveSettings: 'Save Settings',
+    syncNow: 'Sync Now',
+    refreshStatus: 'Refresh Status',
+    statusTitle: 'Sync Status',
+    repoUrl: 'Repository URL',
+    repoPath: 'Local Path',
+    selectPath: 'Select Path',
+    repoReady: 'Repository Ready',
+    indexReady: 'Index Ready',
+    indexedEntries: 'Indexed Entries',
+    lastCommit: 'Last Commit',
+    lastSync: 'Last Sync',
+    indexedAt: 'Indexed At',
+    syncSuccess: 'ExploitDB synced successfully',
+    browserTitle: 'Dataset Browser',
+    browserDescription: 'Search the local ExploitDB index by keyword, CVE, platform, or exploit type.',
+    totalResults: '{count} results',
+    repoNotReady: 'The local ExploitDB repository or index is not ready yet. Save the configuration and run sync first.',
+    emptySearch: 'No ExploitDB entries matched the current filters.',
+    pageInfo: 'Page {page} / {total}',
+    detailTitle: 'Entry Detail',
+    detailEmpty: 'Select an entry from the left to inspect its details.',
+    openInToolTest: 'Open In Tool Test',
+    filters: {
+      query: 'Keyword',
+      queryPlaceholder: 'Product, component, exploit title',
+      cve: 'CVE',
+      platform: 'Platform',
+      platformPlaceholder: 'windows / linux / php',
+      type: 'Type',
+      typePlaceholder: 'remote / webapps / dos'
+    },
+    detail: {
+      author: 'Author',
+      publishedAt: 'Published At',
+      platform: 'Platform',
+      type: 'Type',
+      cves: 'Related CVEs',
+      pocCode: 'PoC / Exploit Code',
+      truncated: 'Content truncated',
+      copyPoc: 'Copy',
+      copySuccess: 'PoC copied to clipboard',
+      copyFailed: 'Failed to copy PoC'
+    }
+  },
+
+  // Shell terminal
+  shell: {
+    title: 'Shell Terminal',
+    clear: 'Clear',
+    settings: 'Settings',
+    executing: 'Executing...',
+    enterCommand: 'Enter command...',
+    welcome: 'Sentinel AI Shell Terminal',
+    welcomeHint: 'Type commands and press Enter to execute. Type help for available commands.',
+    historyHint: 'Use ↑/↓ to navigate command history.',
+    completedIn: 'Completed in {time}ms (exit code: {code})',
+    helpText: `Available commands:
+  clear, cls    - Clear the terminal
+  help          - Show this help message
+  cd <path>     - Change directory
+  pwd           - Print working directory
+  exit          - Close the terminal
+  
+Any other command will be executed in the system shell.`,
+    openTerminal: 'Open Terminal',
+    securityConfig: 'Security Config',
+    defaultPolicy: 'Default Policy',
+    defaultPolicyHint: 'Action for commands not matching any rule',
+    actionAllow: 'Allow',
+    actionAsk: 'Ask User',
+    actionDeny: 'Deny',
+    securityRules: 'Security Rules',
+    addRule: 'Add Rule',
+    ruleOrder: 'Order',
+    rulePattern: 'Command Pattern (contains match)',
+    ruleAction: 'Action',
+    ruleOperations: 'Operations',
+    noRules: 'No rules. Default policy will be used.',
+    ruleHint: 'Rules are matched in order. Once matched, the corresponding action is applied. Put specific rules before general ones.',
+    saveConfig: 'Save Config',
+    configSaved: 'Configuration saved',
+    configLoadFailed: 'Failed to load configuration',
+    configSaveFailed: 'Failed to save configuration',
+    patternRequired: 'Rule pattern cannot be empty',
+    // Inline confirmation
+    runCommand: 'Run command?',
+    accept: 'Accept',
+    reject: 'Reject',
+    alwaysAccept: 'Always Accept',
+    alwaysAcceptHint: 'Add this command to allow list and execute',
+    allowRulePreviewTitle: 'Always Accept will save these rules:',
+    semanticLabels: {
+      read_only: 'Read-only',
+      readOnly: 'Read-only',
+      mutating: 'Mutating',
+      dangerous: 'High-risk'
+    },
+    semanticSummaries: {
+      readOnly: 'Read-only command detected.',
+      mutating: 'Command may change files, processes, or system state.',
+      dangerous: 'High-risk command detected.'
+    },
+    semanticReasons: {
+      readOnly: 'The command appears to inspect files, git state, or system information without changing state.',
+      mutating: 'This command is not recognized as read-only and may modify files, processes, or system state.',
+      dangerousPrivilegeEscalation: 'The command attempts to escalate privileges.',
+      dangerousUserContextSwitch: 'The command attempts to switch user context.'
+    },
+    allowRuleReasons: {
+      keepOriginalReadOnly: 'No narrower safe prefix was recognized, so the original read-only command is kept.',
+      narrowReadOnlyBase: 'Rule narrowed to the read-only base command so future approvals stay reusable without widening scope.',
+      narrowTestCommand: 'Rule narrowed to the read-only test command.',
+      narrowCommandExists: 'Rule narrowed to command-existence checks.',
+      narrowFind: 'Rule narrowed to read-only file discovery.',
+      narrowGitInspection: 'Rule narrowed to git inspection commands.',
+      narrowGitSubcommand: 'Rule narrowed to the specific read-only git subcommand.',
+      narrowGitRemoteShow: 'Rule narrowed to read-only git remote inspection.',
+      narrowGitRemoteGetUrl: 'Rule narrowed to read-only git remote URL inspection.',
+      narrowGitStashList: 'Rule narrowed to read-only stash listing.',
+      narrowGitStashShow: 'Rule narrowed to read-only stash inspection.',
+      exactMutatingSubcommand: 'Mutating commands keep the exact subcommand to avoid broadening future approvals.'
+    },
+    success: 'Success',
+    failed: 'Failed',
+    copyAll: 'Copy',
+    copyAllHint: 'Copy command and all output',
+    outputTruncatedHint: 'Output truncated for performance. Copy all to see full output.',
+    noOutput: '(no output)',
+    longRunningCommandTitle: 'This command is better suited for the interactive terminal',
+    longRunningCommandHint: 'Detected a background or long-lived command. The one-shot shell waits for stdout/stderr to close, so it can appear stuck in Running. Use the Terminal panel instead, or fully detach stdout/stderr in the command.',
+    clickToExpand: 'Click to expand',
+    expand: 'Expand',
+    collapse: 'Collapse'
+  },
+
+  // Legacy fields
+  title: 'MCP Tools',
+  description: 'Manage and use MCP tools and services',
+  mcpServer: 'MCP Server',
+  endpoint: 'Endpoint',
+  startServer: 'Start Server',
+  stopServer: 'Stop Server',
+  availableTools: 'Available Tools',
+  connections: 'Connections',
+  mcpConnections: 'MCP Connections',
+  noConnections: 'No active MCP connections.',
+  addConnection: 'Add Connection',
+  searchPlaceholder: 'Search for tools...',
+  installFromGithub: 'Install from GitHub',
+  installFromGithubDescription: 'Install MCP tool from a GitHub repository URL',
+  githubUrl: 'GitHub URL',
+  installFromFile: 'Install from File',
+  installFromFileDescription: 'Install MCP tool from a local file',
+  selectFile: 'Select File',
+  installTypes: {
+    url: 'URL',
+    file: 'File',
+    registry: 'Registry',
+    process: 'Sub-process'
+  },
+  command: 'Command',
+  args: 'Arguments',
+  argsHint: 'Separate multiple arguments with spaces',
+  commandHint: 'Please enter the full path of the executable or ensure the command is in the system PATH',
+  commandNotFoundConfirm: 'Command not found in the system. Do you need help?',
+  commandNotFoundHelp: 'Please try the following solutions:\n1. Ensure the command name is correct\n2. Use the full absolute path (e.g., C:\\Program Files\\app\\command.exe)\n3. Add the command\'s directory to the system PATH environment variable\n4. If it\'s an npm package, install it globally first (npm install -g package-name)',
+  toolDescriptions: {
+    fileSystem: 'File system operations',
+    textEditor: 'Text editing capabilities',
+    codeAnalysis: 'Code analysis tools',
+    webSearch: 'Web search functionality',
+    database: 'Database operations',
+    network: 'Network tools',
+    security: 'Security testing tools',
+    automation: 'Automation utilities'
+  }
+}

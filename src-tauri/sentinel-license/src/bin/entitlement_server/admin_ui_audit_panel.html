@@ -1,0 +1,24 @@
+        <section class="card panel-body view-panel" data-section-panel="audit" hidden>
+          <div class="section-head">
+            <div>
+              <div class="eyebrow">Audit</div>
+              <h2>审计日志</h2>
+            </div>
+            <div class="toolbar">
+              <input id="auditCustomerFilter" placeholder="customer_id 过滤，可留空" />
+              <input id="auditEventTypeFilter" placeholder="event_type 过滤，可留空" />
+              <select id="auditLimitSelect">
+                <option value="20">最近 20 条</option>
+                <option value="50" selected>最近 50 条</option>
+                <option value="100">最近 100 条</option>
+              </select>
+              <button class="secondary" id="refreshAuditBtn">刷新审计</button>
+            </div>
+          </div>
+          <div class="toolbar section-toolbar">
+            <button class="ghost" id="auditPrevBtn">上一页</button>
+            <button class="ghost" id="auditNextBtn">下一页</button>
+            <span class="pill" id="auditPagePill">第 1 页</span>
+          </div>
+          <div class="list" id="auditList"></div>
+        </section>

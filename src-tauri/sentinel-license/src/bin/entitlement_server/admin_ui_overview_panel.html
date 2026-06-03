@@ -1,0 +1,16 @@
+        <section class="card panel-body view-panel" data-section-panel="overview">
+          <div class="section-head">
+            <div>
+              <div class="eyebrow">Service Health</div>
+              <h2>运行概况</h2>
+            </div>
+            <div class="toolbar">
+              <button class="secondary" id="refreshOverviewBtn">刷新概况</button>
+            </div>
+          </div>
+          <div class="overview-copy">
+            这个内置管理页直接复用 `entitlement_server` 的管理 API。当前优先覆盖客户授权、refresh key、
+            审计排查、设备解绑和管理员账号维护。
+          </div>
+          <div class="status-grid" id="healthMetrics"></div>
+        </section>

@@ -1,0 +1,936 @@
+//! AI 服务管理器
+//!
+//! 管理多个 AI 提供商配置，从数据库加载配置并创建 AiService 实例。
+
+use anyhow::{anyhow, Result};
+use serde::Deserialize;
+use serde_json::Value;
+use std::collections::HashMap;
+use std::sync::Arc;
+use tauri::AppHandle;
+use tracing::{debug, error, info, warn};
+use uuid::Uuid;
+
+use crate::models::database::{AiConversation, AiMessage};
+use crate::services::database::Database;
+use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
+use crate::utils::ordered_message::ChunkType;
+use sentinel_llm::{AiConfig, AiService, LlmConfig};
+
+/// AI 服务管理器
+#[derive(Debug, Clone)]
+pub struct AiServiceManager {
+    services: Arc<std::sync::RwLock<HashMap<String, AiServiceWrapper>>>,
+    db: Arc<dyn Database + Send + Sync>,
+    app_handle: Arc<std::sync::RwLock<Option<AppHandle>>>,
+}
+
+fn parse_provider_extra_body(provider_label: &str, value: Option<&Value>) -> Result<Option<Value>> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    if value.is_null() {
+        return Ok(None);
+    }
+    if !value.is_object() {
+        return Err(anyhow!(
+            "Provider '{}' extra_body must be a JSON object",
+            provider_label
+        ));
+    }
+    Ok(Some(value.clone()))
+}
+
+fn validate_provider_extra_body(provider_label: &str, value: &Option<Value>) -> Result<()> {
+    if let Some(value) = value {
+        if !value.is_object() {
+            return Err(anyhow!(
+                "Provider '{}' extra_body must be a JSON object",
+                provider_label
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// 包装 AiService 并添加应用特定功能
+#[derive(Clone)]
+pub struct AiServiceWrapper {
+    pub service: AiService,
+    pub config: AiConfig,
+    pub db: Arc<dyn Database + Send + Sync>,
+    pub app_handle: Option<AppHandle>,
+}
+
+impl std::fmt::Debug for AiServiceWrapper {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AiServiceWrapper")
+            .field("config", &self.config)
+            .field("app_handle", &self.app_handle.is_some())
+            .finish()
+    }
+}
+
+impl AiServiceWrapper {
+    pub fn new(
+        config: AiConfig,
+        db: Arc<dyn Database + Send + Sync>,
+        app_handle: Option<AppHandle>,
+    ) -> Self {
+        Self {
+            service: AiService::new(config.clone()),
+            config,
+            db,
+            app_handle,
+        }
+    }
+
+    pub fn get_config(&self) -> &AiConfig {
+        &self.config
+    }
+
+    pub fn set_app_handle(&mut self, app_handle: AppHandle) {
+        self.app_handle = Some(app_handle);
+    }
+
+    // 对话管理方法
+    pub async fn create_conversation(&self, title: Option<String>) -> Result<String> {
+        let mut conversation =
+            AiConversation::new(self.config.model.clone(), self.config.provider.clone());
+        conversation.id = Uuid::new_v4().to_string();
+        conversation.title = title;
+        self.db.create_ai_conversation(&conversation).await?;
+        Ok(conversation.id)
+    }
+
+    pub async fn get_conversation_history(&self, conversation_id: &str) -> Result<Vec<AiMessage>> {
+        self.db
+            .get_ai_messages_by_conversation(conversation_id)
+            .await
+    }
+
+    pub async fn delete_conversation(&self, conversation_id: &str) -> Result<()> {
+        self.db.delete_ai_conversation(conversation_id).await
+    }
+
+    pub async fn list_conversations(&self) -> Result<Vec<AiConversation>> {
+        self.db.get_ai_conversations().await
+    }
+
+    pub async fn list_conversations_paginated(
+        &self,
+        limit: i64,
+        offset: i64,
+    ) -> Result<Vec<AiConversation>> {
+        self.db.get_ai_conversations_paginated(limit, offset).await
+    }
+
+    pub async fn get_conversations_count(&self) -> Result<i64> {
+        self.db.get_ai_conversations_count().await
+    }
+
+    pub async fn update_conversation_title(
+        &self,
+        conversation_id: &str,
+        title: &str,
+    ) -> Result<()> {
+        self.db
+            .update_ai_conversation_title(conversation_id, title)
+            .await
+    }
+
+    pub async fn archive_conversation(&self, _conversation_id: &str) -> Result<()> {
+        warn!("archive_ai_conversation feature not fully implemented");
+        Ok(())
+    }
+
+    /// 发送消息块到前端
+    pub fn emit_message_chunk(
+        &self,
+        execution_id: &str,
+        message_id: &str,
+        conversation_id: Option<&str>,
+        chunk_type: Option<ChunkType>,
+        content: &str,
+        is_final: bool,
+        stage: Option<&str>,
+        architecture: Option<crate::utils::ordered_message::ArchitectureType>,
+    ) {
+        if let Some(app_handle) = &self.app_handle {
+            crate::utils::ordered_message::emit_message_chunk_with_arch(
+                app_handle,
+                execution_id,
+                message_id,
+                conversation_id,
+                chunk_type.unwrap_or(ChunkType::Content),
+                content,
+                is_final,
+                stage,
+                None,
+                architecture,
+                None,
+            );
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProviderConfig {
+    #[allow(unused)]
+    id: String,
+    provider: String,
+    name: String,
+    #[serde(default)]
+    rig_provider: Option<String>,
+    api_key: Option<String>,
+    api_base: Option<String>,
+    organization: Option<String>,
+    enabled: bool,
+    default_model: String,
+    #[serde(default)]
+    extra_headers: Option<HashMap<String, String>>,
+    #[serde(default)]
+    extra_body: Option<serde_json::Value>,
+    #[allow(unused)]
+    models: Vec<ModelDefinition>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ModelDefinition {
+    #[allow(unused)]
+    id: String,
+    #[allow(unused)]
+    name: String,
+    #[allow(unused)]
+    #[serde(default)]
+    config: serde_json::Value,
+}
+
+impl AiServiceManager {
+    pub fn new(db: Arc<dyn Database + Send + Sync>) -> Self {
+        Self {
+            services: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            db,
+            app_handle: Arc::new(std::sync::RwLock::new(None)),
+        }
+    }
+
+    pub fn get_db_arc(&self) -> Arc<dyn Database + Send + Sync> {
+        self.db.clone()
+    }
+
+    /// 从数据库获取 AI 提供商配置
+    pub async fn get_provider_config(&self, provider: &str) -> Result<Option<AiConfig>> {
+        let (temperature, max_tokens) = self.load_generation_settings().await;
+        if let Ok(Some(providers_json)) = self.db.get_config("ai", "providers_config").await {
+            if let Ok(providers) =
+                serde_json::from_str::<HashMap<String, serde_json::Value>>(&providers_json)
+            {
+                for (key, provider_data) in providers {
+                    if let Some(provider_obj) = provider_data.as_object() {
+                        if let Some(provider_name) =
+                            provider_obj.get("provider").and_then(|v| v.as_str())
+                        {
+                            if provider_name.to_lowercase() == provider.to_lowercase()
+                                || key.to_lowercase() == provider.to_lowercase()
+                            {
+                                let api_key = provider_obj
+                                    .get("api_key")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                let api_base = provider_obj
+                                    .get("api_base")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                let default_model = provider_obj
+                                    .get("default_model")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("default")
+                                    .to_string();
+                                let organization = provider_obj
+                                    .get("organization")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                let rig_provider = provider_obj
+                                    .get("rig_provider")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string());
+                                let extra_headers = provider_obj
+                                    .get("extra_headers")
+                                    .and_then(|v| serde_json::from_value(v.clone()).ok());
+                                let extra_body = parse_provider_extra_body(
+                                    provider_name,
+                                    provider_obj.get("extra_body"),
+                                )?;
+
+                                return Ok(Some(AiConfig {
+                                    provider: provider_name.to_string(),
+                                    model: default_model,
+                                    api_key,
+                                    api_base,
+                                    organization,
+                                    temperature: Some(temperature),
+                                    max_tokens: Some(max_tokens),
+                                    rig_provider,
+                                    max_turns: self
+                                        .db
+                                        .get_config("ai", "max_turns")
+                                        .await
+                                        .ok()
+                                        .flatten()
+                                        .and_then(|s| s.parse().ok()),
+                                    extra_headers,
+                                    extra_body,
+                                }));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        let api_key_name = format!("api_key_{}", provider.to_lowercase());
+        let api_key = self.db.get_config("ai", &api_key_name).await.ok().flatten();
+
+        if api_key.is_some() {
+            let api_base = match provider.to_lowercase().as_str() {
+                "openai" => Some("https://api.openai.com/v1".to_string()),
+                "anthropic" => Some("https://api.anthropic.com".to_string()),
+                "deepseek" => Some("https://api.deepseek.com".to_string()),
+                "google" => Some("https://generativelanguage.googleapis.com/v1beta".to_string()),
+                "ollama" => Some("http://localhost:11434".to_string()),
+                "moonshot" => Some("https://api.moonshot.ai".to_string()),
+                "modelscope" => Some("https://api-inference.modelscope.cn/v1".to_string()),
+                "openrouter" => Some("https://openrouter.ai/api/v1".to_string()),
+                _ => None,
+            };
+
+            let default_model = match provider.to_lowercase().as_str() {
+                "openai" => "gpt-4o",
+                "anthropic" => "claude-3-5-sonnet-20241022",
+                "deepseek" => "deepseek-chat",
+                "google" => "gemini-pro",
+                "ollama" => "llama2",
+                "moonshot" => "moonshot-v1",
+                "modelscope" => "qwen2.5-coder-32b-instruct",
+                "openrouter" => "gpt-4o",
+                _ => "default",
+            }
+            .to_string();
+
+            // 根据 provider 推断 rig_provider
+            let rig_provider = match provider.to_lowercase().as_str() {
+                "openai" => Some("openai".to_string()),
+                "anthropic" => Some("anthropic".to_string()),
+                "deepseek" => Some("deepseek".to_string()),
+                "google" | "gemini" => Some("gemini".to_string()),
+                "ollama" => Some("ollama".to_string()),
+                "moonshot" => Some("moonshot".to_string()),
+                "modelscope" => Some("openai".to_string()), // OpenAI 兼容
+                "openrouter" => Some("openrouter".to_string()),
+                "groq" => Some("groq".to_string()),
+                "xai" => Some("xai".to_string()),
+                "cohere" => Some("cohere".to_string()),
+                "perplexity" => Some("perplexity".to_string()),
+                "togetherai" => Some("togetherai".to_string()),
+                "hyperbolic" => Some("hyperbolic".to_string()),
+                _ => Some("openai".to_string()), // 默认 OpenAI 兼容
+            };
+
+            return Ok(Some(AiConfig {
+                provider: provider.to_string(),
+                model: default_model,
+                api_key,
+                api_base,
+                organization: None,
+                temperature: Some(temperature),
+                max_tokens: Some(max_tokens),
+                rig_provider,
+                max_turns: self
+                    .db
+                    .get_config("ai", "max_turns")
+                    .await
+                    .ok()
+                    .flatten()
+                    .and_then(|s| s.parse().ok()),
+                extra_headers: None,
+                extra_body: None,
+            }));
+        }
+
+        Ok(None)
+    }
+
+    pub fn set_app_handle(&self, app_handle: AppHandle) {
+        let mut handle_guard = self.app_handle.write().unwrap();
+        *handle_guard = Some(app_handle.clone());
+        let mut services = self.services.write().unwrap();
+        for service in services.values_mut() {
+            service.set_app_handle(app_handle.clone());
+        }
+    }
+
+    pub async fn add_service(&self, name: String, config: AiConfig) -> Result<()> {
+        let wrapper = AiServiceWrapper::new(
+            config,
+            self.db.clone(),
+            self.app_handle.read().unwrap().clone(),
+        );
+        let mut services = self.services.write().unwrap();
+        services.insert(name, wrapper);
+        Ok(())
+    }
+
+    pub fn get_service(&self, name: &str) -> Option<AiServiceWrapper> {
+        let services = self.services.read().unwrap();
+        services.get(name).cloned()
+    }
+
+    pub fn list_services(&self) -> Vec<String> {
+        let services = self.services.read().unwrap();
+        services.keys().cloned().collect()
+    }
+
+    pub fn remove_service(&self, name: &str) -> bool {
+        let mut services = self.services.write().unwrap();
+        services.remove(name).is_some()
+    }
+
+    pub async fn reload_services(&self) -> anyhow::Result<()> {
+        info!("Reloading AI services...");
+        {
+            let mut services = self.services.write().unwrap();
+            services.clear();
+        }
+        self.init_default_services().await
+    }
+
+    pub async fn init_default_services(&self) -> anyhow::Result<()> {
+        debug!("Initializing default AI services...");
+
+        // Get global default model as fallback
+        let global_default_model = self
+            .db
+            .get_config("ai", "default_llm_model")
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default();
+        let (temperature, max_tokens) = self.load_generation_settings().await;
+
+        if let Ok(Some(config_str)) = self.db.get_config("ai", "providers_config").await {
+            match serde_json::from_str::<HashMap<String, ProviderConfig>>(&config_str) {
+                Ok(providers) => {
+                    debug!("Successfully parsed 'providers_config' from DB.");
+                    for (_id, provider_config) in providers {
+                        if !provider_config.enabled {
+                            continue;
+                        }
+
+                        debug!("Initializing enabled provider: {}", provider_config.name);
+
+                        let api_key = provider_config.api_key.as_deref().map(String::from);
+                        std::env::set_var(
+                            format!("{}_API_KEY", provider_config.name.to_uppercase()),
+                            api_key.as_deref().unwrap_or(""),
+                        );
+
+                        // Use provider's default model, or fall back to global default model
+                        let mut default_model = provider_config.default_model.clone();
+
+                        // If provider model is empty, try to extract from global default
+                        if default_model.is_empty() && !global_default_model.is_empty() {
+                            // Check if global default is in format "provider/model"
+                            if let Some(slash_idx) = global_default_model.find('/') {
+                                let (model_provider, model_name) =
+                                    global_default_model.split_at(slash_idx);
+                                let model_name = &model_name[1..]; // Skip the '/'
+
+                                // Use global default model if it matches this provider
+                                if model_provider.eq_ignore_ascii_case(&provider_config.name)
+                                    || model_provider
+                                        .eq_ignore_ascii_case(&provider_config.provider)
+                                {
+                                    default_model = model_name.to_string();
+                                    debug!(
+                                        "Using global default model for {}: {}",
+                                        provider_config.name, model_name
+                                    );
+                                }
+                            } else {
+                                // Global default doesn't have provider prefix, use it as-is
+                                default_model = global_default_model.clone();
+                                debug!(
+                                    "Using global default model for {}: {}",
+                                    provider_config.name, default_model
+                                );
+                            }
+                        }
+
+                        if default_model.is_empty() {
+                            warn!("Provider {} has no default model configured, service may not work properly", provider_config.name);
+                        }
+                        validate_provider_extra_body(
+                            &provider_config.name,
+                            &provider_config.extra_body,
+                        )?;
+
+                        let api_base = provider_config.api_base.filter(|s| !s.is_empty());
+                        let organization = provider_config.organization.filter(|s| !s.is_empty());
+
+                        let rig_provider = provider_config
+                            .rig_provider
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| provider_config.provider.clone());
+
+                        debug!(
+                            "Provider {} using rig_provider: {}, model: {}",
+                            provider_config.name, rig_provider, default_model
+                        );
+
+                        // Read max_turns from database
+                        let max_turns = self
+                            .db
+                            .get_config("ai", "max_turns")
+                            .await
+                            .ok()
+                            .flatten()
+                            .and_then(|s| s.parse::<usize>().ok());
+
+                        let config = AiConfig {
+                            provider: rig_provider.clone(),
+                            model: default_model,
+                            api_key,
+                            api_base,
+                            organization,
+                            temperature: Some(temperature),
+                            max_tokens: Some(max_tokens),
+                            rig_provider: Some(rig_provider),
+                            max_turns,
+                            extra_headers: provider_config.extra_headers.clone(),
+                            extra_body: provider_config.extra_body.clone(),
+                        };
+
+                        // Use lowercase name as service key for consistency
+                        let service_key = provider_config.name.to_lowercase();
+                        if let Err(e) = self.add_service(service_key.clone(), config).await {
+                            error!(
+                                "Failed to add service for provider {}: {}",
+                                provider_config.name, e
+                            );
+                        }
+                    }
+                }
+                Err(e) => {
+                    error!(
+                        "Failed to parse 'providers_config': {}. Content: {}",
+                        e, config_str
+                    );
+                }
+            }
+        } else {
+            info!("'providers_config' not found in database.");
+        }
+
+        // Try new config key first, fallback to legacy key and migrate
+        let default_llm_provider = match self.db.get_config("ai", "default_llm_provider").await {
+            Ok(Some(v)) => Some(v),
+            _ => {
+                // Migrate from legacy key if exists
+                if let Ok(Some(legacy)) = self.db.get_config("ai", "default_provider").await {
+                    info!(
+                        "Migrating default_provider to default_llm_provider: {}",
+                        legacy
+                    );
+                    let _ = self
+                        .db
+                        .set_config(
+                            "ai",
+                            "default_llm_provider",
+                            &legacy,
+                            Some("Global default LLM provider"),
+                        )
+                        .await;
+                    Some(legacy)
+                } else {
+                    None
+                }
+            }
+        };
+
+        if let Some(provider) = default_llm_provider {
+            let provider_key = provider.to_lowercase();
+            if self.get_service(&provider_key).is_some() {
+                if let Err(e) = self.set_default_alias_to(&provider_key).await {
+                    warn!("Failed to set default alias to '{}': {}", provider_key, e);
+                }
+            }
+        }
+
+        if !self.services.read().unwrap().contains_key("default") {
+            if self.services.read().unwrap().is_empty() {
+                warn!("No AI services configured. Creating minimal default service.");
+                if let Err(e) = self.create_minimal_default_service().await {
+                    error!("Failed to create minimal default service: {}", e);
+                }
+            } else if let Err(e) = self.create_default_alias().await {
+                error!("Failed to create default alias: {}", e);
+            }
+        }
+
+        debug!(
+            "Finished initializing AI services. Total: {}",
+            self.services.read().unwrap().len()
+        );
+
+        Ok(())
+    }
+
+    async fn create_default_alias(&self) -> anyhow::Result<()> {
+        let services = self.list_services();
+        if services.contains(&"default".to_string()) {
+            return Ok(());
+        }
+
+        let preferred = vec![
+            "deepseek",
+            "openai",
+            "anthropic",
+            "gemini",
+            "groq",
+            "ollama",
+            "moonshot",
+            "openrouter",
+            "modelscope",
+        ];
+
+        for provider in preferred {
+            if services.contains(&provider.to_string()) {
+                if let Some(wrapper) = self.get_service(provider) {
+                    let config = wrapper.get_config().clone();
+                    self.add_service("default".to_string(), config).await?;
+                    debug!("Created default alias pointing to {}", provider);
+                    return Ok(());
+                }
+            }
+        }
+
+        if let Some(first) = services.first() {
+            if let Some(wrapper) = self.get_service(first) {
+                let config = wrapper.get_config().clone();
+                self.add_service("default".to_string(), config).await?;
+                info!("Created default alias pointing to {}", first);
+            }
+        }
+
+        Ok(())
+    }
+
+    pub async fn set_default_alias_to(&self, provider: &str) -> anyhow::Result<()> {
+        let provider_lc = provider.to_lowercase();
+
+        // First try to get service by lowercase name (our standard key format)
+        let service = self.get_service(&provider_lc);
+
+        // If not found, search by provider field in config
+        let service = if service.is_some() {
+            service
+        } else {
+            let services = self.services.read().unwrap();
+            services
+                .iter()
+                .find(|(_n, svc)| svc.get_config().provider.to_lowercase() == provider_lc)
+                .map(|(_, svc)| svc.clone())
+        };
+
+        let Some(service) = service else {
+            anyhow::bail!("Target provider service '{}' not found", provider);
+        };
+
+        let config = service.get_config().clone();
+        {
+            let mut services = self.services.write().unwrap();
+            services.remove("default");
+        }
+        self.add_service("default".to_string(), config).await?;
+        info!("Default service alias now points to '{}'", provider_lc);
+        Ok(())
+    }
+
+    async fn create_minimal_default_service(&self) -> anyhow::Result<()> {
+        warn!("Creating minimal default service - no AI providers configured!");
+        let (temperature, max_tokens) = self.load_generation_settings().await;
+        let config = AiConfig {
+            provider: "unconfigured".to_string(),
+            model: "no-model-configured".to_string(),
+            api_key: None,
+            api_base: None,
+            organization: None,
+            temperature: Some(temperature),
+            max_tokens: Some(max_tokens),
+            rig_provider: None,
+            max_turns: self
+                .db
+                .get_config("ai", "max_turns")
+                .await
+                .ok()
+                .flatten()
+                .and_then(|s| s.parse().ok()),
+            extra_headers: None,
+            extra_body: None,
+        };
+        self.add_service("default".to_string(), config).await?;
+        Ok(())
+    }
+
+    async fn load_generation_settings(&self) -> (f32, u32) {
+        let temperature = self
+            .db
+            .get_config("ai", "temperature")
+            .await
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse::<f32>().ok())
+            .unwrap_or(0.7);
+
+        let max_tokens = self
+            .db
+            .get_config("ai", "max_tokens")
+            .await
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(4096);
+
+        (temperature, max_tokens)
+    }
+}
+
+// 模型相关方法
+impl AiServiceManager {
+    pub async fn get_chat_models(&self) -> Result<Vec<ModelInfo>> {
+        let mut all_models = Vec::new();
+
+        if let Ok(Some(providers_config_str)) = self.db.get_config("ai", "providers_config").await {
+            if let Ok(providers) =
+                serde_json::from_str::<HashMap<String, serde_json::Value>>(&providers_config_str)
+            {
+                for (_provider_key, provider_data) in providers {
+                    if let Some(provider_obj) = provider_data.as_object() {
+                        let enabled = provider_obj
+                            .get("enabled")
+                            .and_then(|v| v.as_bool())
+                            .unwrap_or(false);
+
+                        if !enabled {
+                            continue;
+                        }
+
+                        let provider_name = provider_obj
+                            .get("provider")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or_default()
+                            .to_string();
+
+                        if provider_name.is_empty() {
+                            continue;
+                        }
+
+                        if let Some(models_arr) =
+                            provider_obj.get("models").and_then(|v| v.as_array())
+                        {
+                            for model_val in models_arr {
+                                if let Some(model_obj) = model_val.as_object() {
+                                    if let Some(model_name) =
+                                        model_obj.get("id").and_then(|v| v.as_str())
+                                    {
+                                        all_models.push(ModelInfo {
+                                            provider: provider_name.clone(),
+                                            name: model_name.to_string(),
+                                            is_chat: true,
+                                            is_embedding: false,
+                                        });
+                                    }
+                                }
+                            }
+                        } else if let Some(default_model) =
+                            provider_obj.get("default_model").and_then(|v| v.as_str())
+                        {
+                            all_models.push(ModelInfo {
+                                provider: provider_name.clone(),
+                                name: default_model.to_string(),
+                                is_chat: true,
+                                is_embedding: false,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+
+        if all_models.is_empty() {
+            all_models = vec![
+                ModelInfo {
+                    provider: "openai".to_string(),
+                    name: "gpt-4o".to_string(),
+                    is_chat: true,
+                    is_embedding: false,
+                },
+                ModelInfo {
+                    provider: "anthropic".to_string(),
+                    name: "claude-3-5-sonnet-20241022".to_string(),
+                    is_chat: true,
+                    is_embedding: false,
+                },
+            ];
+        }
+
+        Ok(all_models)
+    }
+
+    pub async fn get_embedding_models(&self) -> Result<Vec<ModelInfo>> {
+        Ok(vec![])
+    }
+
+    pub async fn get_default_llm_model(&self) -> Result<Option<(String, String)>> {
+        if let Ok(Some(model_str)) = self.db.get_config("ai", "default_llm_model").await {
+            if let Some((provider, model_name)) = model_str.split_once('/') {
+                return Ok(Some((provider.to_string(), model_name.to_string())));
+            }
+        }
+        Ok(None)
+    }
+
+    pub fn find_service_by_provider(&self, provider: &str) -> Option<AiServiceWrapper> {
+        let provider_lc = provider.trim().to_lowercase();
+        if provider_lc.is_empty() {
+            return None;
+        }
+
+        self.get_service(&provider_lc).or_else(|| {
+            self.list_services().into_iter().find_map(|service_name| {
+                let service = self.get_service(&service_name)?;
+                let service_provider = service.get_config().provider.to_lowercase();
+                if service_provider == provider_lc || service_name.to_lowercase() == provider_lc {
+                    Some(service)
+                } else {
+                    None
+                }
+            })
+        })
+    }
+
+    pub async fn resolve_generation_service(
+        &self,
+        provider_override: Option<&str>,
+    ) -> Result<AiServiceWrapper> {
+        if let Some(provider) = provider_override
+            .map(str::trim)
+            .filter(|provider| !provider.is_empty())
+        {
+            return self.find_service_by_provider(provider).ok_or_else(|| {
+                anyhow::anyhow!(
+                    "No AI service available for provider override '{}'",
+                    provider
+                )
+            });
+        }
+
+        if let Ok(Some((provider, _model_name))) = self.get_default_llm_model().await {
+            if let Some(service) = self.find_service_by_provider(&provider) {
+                return Ok(service);
+            }
+        }
+
+        self.get_service("default")
+            .or_else(|| {
+                self.list_services()
+                    .first()
+                    .and_then(|service_name| self.get_service(service_name))
+            })
+            .ok_or_else(|| anyhow::anyhow!("No AI service available"))
+    }
+
+    pub async fn resolve_generation_llm_config(
+        &self,
+        provider_override: Option<&str>,
+        model_override: Option<&str>,
+    ) -> Result<LlmConfig> {
+        let service = self.resolve_generation_service(provider_override).await?;
+        let mut llm_config = apply_generation_settings_from_db(
+            self.get_db_arc().as_ref(),
+            service.service.to_llm_config(),
+        )
+        .await;
+
+        if let Some(model) = model_override
+            .map(str::trim)
+            .filter(|model| !model.is_empty())
+        {
+            llm_config = llm_config.with_model(model);
+        }
+
+        Ok(llm_config)
+    }
+
+    pub async fn set_default_llm_model(&self, provider: &str, model_name: &str) -> Result<()> {
+        let model_value = format!("{}/{}", provider, model_name);
+        self.db
+            .set_config(
+                "ai",
+                "default_llm_model",
+                &model_value,
+                Some("Default LLM model"),
+            )
+            .await?;
+        info!("Set default chat model to: {}", model_value);
+        Ok(())
+    }
+
+    pub async fn set_default_model(
+        &self,
+        model_type: &str,
+        provider: &str,
+        model_name: &str,
+    ) -> Result<()> {
+        let config_key = format!("default_{}_model", model_type);
+        let model_value = format!("{}/{}", provider, model_name);
+        self.db
+            .set_config(
+                "ai",
+                &config_key,
+                &model_value,
+                Some(&format!("Default {} model", model_type)),
+            )
+            .await?;
+        info!("Set default {} model to: {}", model_type, model_value);
+        Ok(())
+    }
+
+    pub async fn get_default_model(&self, model_type: &str) -> Result<Option<ModelInfo>> {
+        let config_key = format!("default_{}_model", model_type);
+        if let Ok(Some(model_str)) = self.db.get_config("ai", &config_key).await {
+            if let Some((provider, model_name)) = model_str.split_once('/') {
+                return Ok(Some(ModelInfo {
+                    provider: provider.to_string(),
+                    name: model_name.to_string(),
+                    is_chat: true,
+                    is_embedding: false,
+                }));
+            }
+        }
+        Ok(None)
+    }
+}
+
+/// 模型信息
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ModelInfo {
+    pub provider: String,
+    pub name: String,
+    pub is_chat: bool,
+    pub is_embedding: bool,
+}
+
+// 为兼容性提供类型别名
+pub type LegacyAiService = AiServiceWrapper;

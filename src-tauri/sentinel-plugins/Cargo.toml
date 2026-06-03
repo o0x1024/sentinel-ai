@@ -1,0 +1,70 @@
+[package]
+name = "sentinel-plugins"
+version = "0.1.0"
+edition = "2021"
+description = "Built-in security scanning plugins for Sentinel AI traffic scanner"
+authors = ["Sentinel AI Team"]
+
+[features]
+default = ["db-sqlite"]
+db-sqlite = ["sqlx/sqlite", "sentinel-core/db-sqlite"]
+db-postgres = ["sqlx/postgres", "sentinel-core/db-postgres"]
+db-mysql = ["sqlx/mysql", "sentinel-core/db-mysql"]
+# Legacy feature gate; kept to avoid breaking test cfg attributes.
+plugin-ts-transpile = []
+
+[dependencies]
+# Sentinel core for proxy support
+sentinel-core = { path = "../sentinel-core", default-features = false }
+# SQLx for database queries (dictionary access)
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "derive", "macros"] }
+
+# QuickJS via rquickjs — ES2023-compliant JS engine for plugin execution
+rquickjs = { version = "0.11", features = ["classes", "properties", "parallel"] }
+
+# Sentinel JS — embedded plugin runtime built on QuickJS-NG
+sentinel-js = { path = "../sentinel-js" }
+
+# Oxc — TypeScript type stripping via proper AST parse + codegen
+oxc = { version = ">=0.120, <0.127", features = ["full"] }
+
+anyhow = "1.0"
+regex = "1"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Async runtime
+tokio = { version = "1.40", features = ["full"] }
+futures = "0.3"
+
+# Logging
+tracing = "0.1"
+encoding_rs = "0.8"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+sha2 = "0.10"
+dirs = "5.0"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+ureq = "3"
+tokio-rustls = "0.26"
+rustls = "0.23"
+webpki-roots = "0.26"
+x509-parser = "0.16"
+tauri = { version = "2.7.0", default-features = false }
+
+rustscan = { package = "myrustscan", version = "2.4.2" }
+
+# HTTP client
+[target.'cfg(not(target_os = "windows"))'.dependencies]
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+
+[target.'cfg(target_os = "windows")'.dependencies]
+reqwest = { version = "0.12", features = ["json", "native-tls"] }
+
+[dev-dependencies]
+sysinfo = "0.30"
+num_cpus = "1.0"
+walkdir = "2"

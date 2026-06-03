@@ -1,0 +1,80 @@
+//! Sentinel Traffic - 流量分析代理与插件引擎
+//!
+//! 本 crate 提供：
+//! - 基于 Hudsucker 的 HTTP/HTTPS 拦截代理（MITM）
+//! - 流量分析流水线（请求/响应上下文、插件分发、Finding 去重）
+//! - 证书管理（Root CA 生成、macOS Keychain 集成）
+//! - HTML 报告导出（Tera 模板）
+//!
+//! ## 插件系统
+//!
+//! 插件系统已移至独立 crate `sentinel-plugins`，提供：
+//! - 基于 Deno Core 的插件引擎（全权限，热重载）
+//! - 插件管理器（加载、启用/禁用、注册表）
+//! - 内置插件（SQL 注入、XSS、敏感信息检测）
+
+pub mod certificate;
+pub mod certificate_authority;
+pub mod error;
+pub mod finding;
+pub mod header_utils;
+pub mod history_cache;
+pub mod history_record_builder;
+pub mod intercept_content;
+pub mod intercept_rules;
+pub mod intercept_tracking;
+pub mod match_replace;
+pub mod packet_capture;
+mod packet_capture_file_extractor;
+mod packet_capture_pcap_ops;
+pub mod proxy;
+mod proxy_connector;
+mod proxy_service;
+mod proxy_types;
+mod proxy_websocket;
+pub mod scanner;
+pub mod scope;
+pub mod system_proxy;
+pub mod types;
+
+pub use certificate::CertificateService;
+pub use certificate_authority::ChainedCertificateAuthority;
+pub use error::{Result, TrafficError};
+
+// Re-export traffic database types from sentinel-db
+pub use history_cache::{
+    HistoryCacheConfig, HistoryCacheStats, HttpRequestFilters, HttpRequestRecord,
+    HttpRequestSummary, ProxyHistoryCache, ProxyHistoryFilters, ProxyHistoryItem,
+    WebSocketConnectionRecord, WebSocketConnectionStatus, WebSocketDirection, WebSocketFilters,
+    WebSocketMessageRecord, WebSocketMessageType,
+};
+pub use match_replace::MatchReplaceRule;
+pub use packet_capture::{
+    CapturedPacket, ExtractedFile, FileExtractor, InterfaceInfo, PacketCaptureService, PcapFileOps,
+    ProtocolLayer,
+};
+pub use proxy::{
+    FailedConnection, InterceptAction, InterceptFilterRule, InterceptState,
+    PendingInterceptRequest, PendingInterceptResponse, PendingInterceptWebSocketMessage,
+    ProxyConfig, ProxyService, ScanSender, ScanTask, UpstreamProxyConfig,
+    WebSocketConnectionContext, WebSocketDirection as ProxyWebSocketDirection,
+    WebSocketMessageContext,
+};
+pub use scanner::{FindingDeduplicator, FindingReceiver, FindingSender, ScanPipeline};
+pub use scope::ProxyScopeRule;
+pub use sentinel_db::{
+    ProxyRequestFilters, ProxyRequestRecord, TrafficEvidenceRecord as EvidenceRecord,
+    TrafficVulnerabilityFilters as VulnerabilityFilters,
+    TrafficVulnerabilityRecord as VulnerabilityRecord,
+    TrafficVulnerabilityWithEvidence as VulnerabilityWithEvidence,
+};
+pub use types::*;
+
+// 重导出插件系统（来自 sentinel-plugins）
+pub use sentinel_plugins::{
+    IntruderPluginCategory, PluginCategory, PluginEngine, PluginError, PluginMainCategory,
+    PluginManager, PluginMetadata, PluginRecord, PluginStatus,
+};
+
+/// 流量分析系统版本
+pub const VERSION: &str = env!("CARGO_PKG_VERSION");

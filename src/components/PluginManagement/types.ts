@@ -1,0 +1,242 @@
+import type { MonitorSeedBinding } from './seedBindingsSupport'
+
+// Plugin Management Types
+
+export type PluginInputMode = 'asset' | 'seed' | 'hybrid'
+
+export interface PluginMetadata {
+  id: string
+  name: string
+  version: string
+  author?: string
+  category: string
+  main_category: string
+  monitor_type?: string
+  input_mode?: PluginInputMode | string
+  description?: string
+  default_severity: string
+  tags: string[]
+  seed_bindings?: MonitorSeedBinding[]
+}
+
+export interface PluginRecord {
+  metadata: PluginMetadata
+  status: 'Enabled' | 'Disabled' | 'Error'
+  file_path: string
+  is_favorited?: boolean
+}
+
+export interface ReviewPlugin {
+  plugin_id: string
+  plugin_name: string
+  code: string
+  description: string
+  vuln_type: string
+  quality_score: number
+  quality_breakdown: {
+    syntax_score: number
+    logic_score: number
+    security_score: number
+    code_quality_score: number
+  }
+  validation: {
+    is_valid: boolean
+    syntax_valid: boolean
+    has_required_functions: boolean
+    security_check_passed: boolean
+    errors: string[]
+    warnings: string[]
+  }
+  status: string
+  generated_at: string
+  model: string
+}
+
+export interface CommandResponse<T> {
+  success: boolean
+  data?: T
+  error?: string
+}
+
+export interface PluginFixTaskResult {
+  runId: string
+  profileId: string
+  fixedCode: string
+  model: string
+  validation: {
+    is_valid: boolean
+    syntax_valid: boolean
+    has_required_functions: boolean
+    security_check_passed: boolean
+    errors: string[]
+    warnings: string[]
+  }
+  executionTest: {
+    success: boolean
+    error_message?: string | null
+    error_details?: string | null
+  }
+  promptPatchApplied: boolean
+}
+
+// Compatibility alias for older imports. Prefer `PluginFixTaskResult`.
+export type PluginFixAgentResult = PluginFixTaskResult
+
+export interface TestResult {
+  success: boolean
+  message?: string
+  findings?: Array<{
+    title: string
+    description: string
+    severity: string
+  }>
+  error?: string
+}
+
+export interface AdvancedRunStat {
+  run_index: number
+  duration_ms: number
+  findings: number
+  error?: string | null
+  output?: any  // Complete output from the plugin execution
+}
+
+export interface BatchToggleResult {
+  enabled_count: number
+  disabled_count: number
+  failed_ids: string[]
+}
+
+export interface AdvancedTestResult {
+  plugin_id: string
+  success: boolean
+  total_runs: number
+  concurrency: number
+  total_duration_ms: number
+  avg_duration_ms: number
+  total_findings: number
+  unique_findings: number
+  findings: Array<{ title: string; description: string; severity: string }>
+  runs: AdvancedRunStat[]
+  message?: string
+  error?: string
+  outputs?: any[]
+}
+
+export interface ReviewStats {
+  total: number
+  pending: number
+  approved: number
+  rejected: number
+  failed: number
+}
+
+export interface NewPluginMetadata {
+  id: string
+  name: string
+  version: string
+  author: string
+  mainCategory: string
+  category: string
+  monitorType: string
+  inputMode: PluginInputMode | ''
+  default_severity: string
+  description: string
+  tagsString: string
+  seedBindingsText: string
+}
+
+export interface AdvancedForm {
+  url: string
+  method: string
+  headersText: string
+  bodyText: string
+  agent_inputs_text: string
+  runs: number
+  concurrency: number
+}
+
+// Category definitions
+export interface Category {
+  value: string
+  label: string
+  icon: string
+}
+
+export interface SubCategory {
+  value: string
+  label: string
+  icon: string
+}
+
+// Main categories
+export const mainCategories: Category[] = [
+  { value: 'traffic', label: '流量分析插件', icon: 'fas fa-shield-alt' },
+  { value: 'agent', label: 'Agent插件', icon: 'fas fa-robot' },
+  { value: 'bounty', label: '漏洞赏金插件', icon: 'fas fa-bug' },
+  { value: 'intruder', label: 'Intruder插件', icon: 'fas fa-crosshairs' },
+]
+
+// Traffic analysis plugin subcategories
+export const trafficCategories = [
+  'sqli', 'command_injection', 'xss', 'idor', 'auth_bypass', 'csrf',
+  'info_leak', 'file_upload', 'file_inclusion', 'path_traversal',
+  'xxe', 'ssrf', 'report', 'custom'
+]
+
+// Agent plugin subcategories
+export const agentsCategories = [
+  'recon',      // Reconnaissance
+  'discovery',  // Discovery & Enumeration
+  'risk',       // Risk Scanning
+  'vuln',       // Vulnerability Scanning
+  'exploit',    // Exploitation
+  'monitor',    // Monitoring & Change Detection
+  'utility',    // Utilities & Tools
+  'scanner',    // General Scanners (legacy)
+  'analyzer',   // Analysis Tools (legacy)
+  'reporter',   // Reporting (legacy)
+  'custom'      // Custom
+]
+
+export const bountyCategories = agentsCategories
+
+// Intruder plugin subcategories
+export const intruderCategories = [
+  'payload_generator',
+  'payload_processor',
+  'request_processor',
+]
+
+// Code reference type for AI assistant
+export interface CodeReference {
+  code: string
+  preview: string
+  startLine: number
+  endLine: number
+  isFullCode: boolean
+}
+
+// Test result reference type for AI assistant
+export interface TestResultReference {
+  result: any  // Original test result object
+  success: boolean
+  message: string
+  preview: string
+  findings?: Array<{ title: string; description: string; severity: string }>
+  error?: string
+  executionTime?: number
+  timestamp: number
+}
+
+// AI chat message type
+export interface AiChatMessage {
+  role: 'user' | 'assistant'
+  content: string
+  codeBlock?: string
+  codeBlocks?: string[]
+  codeRef?: CodeReference
+  testResultRef?: TestResultReference
+  diffApplied?: boolean
+  diffError?: string
+}

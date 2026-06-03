@@ -1,0 +1,1700 @@
+<template>
+  <div class="ai-settings">
+    <!-- 配置模式切换 -->
+    <div class="flex justify-between items-center mb-6">
+      <h2 class="text-2xl font-bold">{{ t('settings.ai.title') }}</h2>
+      <div class="flex items-center gap-4">
+        <div class="form-control">
+          <label class="label cursor-pointer gap-2">
+            <span class="label-text">{{ t('settings.ai.guiMode') }}</span>
+            <input type="checkbox" class="toggle toggle-primary" v-model="useGuiMode" />
+            <span class="label-text">{{ t('settings.ai.manualMode') }}</span>
+          </label>
+        </div>
+        <button v-if="!useGuiMode" class="btn btn-primary btn-sm" @click="validateConfig">
+          <i class="fas fa-check"></i>
+          {{ t('settings.ai.validateConfig') }}
+        </button>
+      </div>
+    </div>
+
+    <!-- 手动编辑模式 -->
+    <div v-if="!useGuiMode" class="card bg-base-100 shadow-sm mb-6">
+      <div class="card-body">
+        <h3 class="card-title mb-4">
+          <i class="fas fa-code"></i>
+          {{ t('settings.ai.manualEdit') }}
+        </h3>
+
+        <!-- JSON 编辑器 -->
+        <div class="space-y-4">
+          <div class="flex items-center gap-2 mb-2">
+            <span class="text-sm text-base-content/70">
+              {{ t('settings.ai.manualEditJson') }}
+            </span>
+            <div class="badge badge-warning badge-sm" v-if="configError">
+              {{ t('settings.ai.configError') }}
+            </div>
+            <div class="badge badge-success badge-sm" v-else-if="configValid">
+              {{ t('settings.ai.configValid') }}
+            </div>
+          </div>
+
+          <div class="relative">
+            <div ref="editorContainer" class="editor-container rounded-lg overflow-hidden border" :class="{
+              'border-error': configError,
+              'border-success': configValid && !configError,
+              'border-base-300': !configError && !configValid
+            }"></div>
+            <button class="fullscreen-btn" @click="toggleFullscreen"
+              :title="t('settings.ai.fullscreen')">
+              <i class="fas fa-expand"></i>
+            </button>
+          </div>
+
+          <div v-if="configError" class="alert alert-error">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>{{ configError }}</span>
+          </div>
+
+          <div class="flex gap-2">
+            <button class="btn btn-primary" @click="applyManualConfig" :disabled="!!configError">
+              <i class="fas fa-save"></i>
+              {{ t('settings.ai.applyManualConfig') }}
+            </button>
+            <button class="btn btn-outline" @click="formatConfig">
+              <i class="fas fa-indent"></i>
+              {{ t('settings.ai.formatConfig') }}
+            </button>
+            <button class="btn btn-outline" @click="resetToDefault">
+              <i class="fas fa-undo"></i>
+              {{ t('settings.ai.resetToDefault') }}
+            </button>
+          </div>
+
+    <!-- 全屏编辑器模态框 -->
+    <div v-if="isFullscreen" class="fullscreen-editor-overlay">
+      <div class="fullscreen-editor-container">
+        <div class="fullscreen-editor-header">
+          <h3 class="text-lg font-semibold flex items-center gap-2">
+            <i class="fas fa-code"></i>
+            {{ t('settings.ai.manualEdit') }}
+          </h3>
+          <div class="flex items-center gap-2">
+            <div class="badge badge-warning badge-sm" v-if="configError">
+              {{ t('settings.ai.configError') }}
+            </div>
+            <div class="badge badge-success badge-sm" v-else-if="configValid">
+              {{ t('settings.ai.configValid') }}
+            </div>
+            <button class="btn btn-ghost btn-sm" @click="formatConfig">
+              <i class="fas fa-indent"></i>
+            </button>
+            <button class="btn btn-ghost btn-sm" @click="exitFullscreen">
+              <i class="fas fa-compress"></i>
+            </button>
+          </div>
+        </div>
+        <div ref="fullscreenEditorContainer" class="fullscreen-editor-content"></div>
+        <div class="fullscreen-editor-footer">
+          <div v-if="configError" class="text-error text-sm flex items-center gap-2">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>{{ configError }}</span>
+          </div>
+          <div class="flex-1"></div>
+          <button class="btn btn-outline btn-sm" @click="exitFullscreen">
+            {{ t('common.cancel') }}
+          </button>
+          <button class="btn btn-primary btn-sm" @click="applyAndExitFullscreen" :disabled="!!configError">
+            <i class="fas fa-save"></i>
+            {{ t('settings.ai.applyManualConfig') }}
+          </button>
+        </div>
+      </div>
+    </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 图形界面模式 -->
+    <div v-if="useGuiMode">
+      <!-- AI提供商状态总览 -->
+      <div class="space-y-4 mb-6">
+        <!-- 默认设置卡片 -->
+        <div class="card bg-base-100 shadow-sm border">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-4 mb-4">
+              <i class="fas fa-cog text-primary text-xl"></i>
+              <h3 class="font-semibold text-lg">{{ t('settings.ai.defaultConfig') }}</h3>
+            </div>
+
+            <!-- 默认Provider和模型选择器 -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <!-- 默认Provider选择器 -->
+              <div class="space-y-2">
+                <label class="label">
+                  <span class="label-text font-medium flex items-center gap-2">
+                    <i class="fas fa-star text-warning"></i>
+                    {{ t('settings.ai.defaultProvider') }}
+                  </span>
+                </label>
+                <SearchableSelect v-model="defaultProviderLocal" :options="providerOptions"
+                  :placeholder="t('settings.ai.selectProvider', 'Select Provider')"
+                  :search-placeholder="t('settings.ai.searchProvider')" @change="onChangeDefaultProvider" />
+              </div>
+
+              <!-- Default Chat Model Selector -->
+              <div class="space-y-2">
+                <label class="label">
+                  <span class="label-text font-medium flex items-center gap-2">
+                    <i class="fas fa-comment-dots text-primary"></i>
+                    {{ t('settings.ai.defaultChatModel') }}
+                  </span>
+                </label>
+                <EditableSelect v-model="defaultChatModelLocal" :options="chatModelOptions"
+                  :placeholder="t('settings.ai.selectOrInputModel')" 
+                  :custom-value-text="t('settings.ai.useCustomModel')"
+                  :disabled="!defaultProviderLocal"
+                  @change="onChangeDefaultChatModel" />
+                <label class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('settings.ai.defaultModelDescription') }}
+                  </span>
+                </label>
+              </div>
+            </div>
+
+
+
+            <!-- 提示信息 -->
+            <div class="flex items-center gap-2 mt-3 text-sm text-base-content/70">
+              <i class="fas fa-info-circle"></i>
+              <span>{{ t('settings.ai.aiAssistantWillUseThisConfig') }}</span>
+            </div>
+          </div>
+        </div>
+        <div v-for="status in aiServiceStatus" :key="status.provider" class="card bg-base-100 shadow-sm border">
+          <div class="card-body p-4">
+            <div class="flex items-center gap-4">
+              <div class="text-2xl">
+                <i :class="getProviderIcon(status.provider)"></i>
+              </div>
+              <div class="flex-1">
+                <h3 class="font-semibold text-lg">{{ getProviderName(status.provider) }}</h3>
+                <div class="flex items-center gap-2 mt-1">
+                  <div class="badge" :class="status.is_available ? 'badge-success' : 'badge-error'">
+                    {{ status.is_available ? t('settings.ai.connected') : t('settings.ai.disconnected') }}
+                  </div>
+                  <span class="text-sm text-base-content/70">{{ status.models_loaded }} {{ t('settings.ai.modelsCount')
+                  }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI提供商配置选项卡 - 垂直布局 -->
+      <div class="flex flex-col lg:flex-row gap-6 mb-6">
+        <!-- 左侧：提供商选择 -->
+        <div class="w-full lg:w-64 flex-shrink-0">
+          <h3 class="text-lg font-semibold mb-3">{{ t('settings.ai.aiProviders') }}</h3>
+          <div class="menu bg-base-200 rounded-box p-2 space-y-1">
+            <li v-for="provider in sortedProviderKeys" :key="provider">
+              <a class="flex items-center gap-3 p-3 rounded-lg transition-all duration-200"
+                :class="{ 'bg-primary text-primary-content': selectedAiProvider === provider }"
+                @click="selectedAiProvider = provider">
+                <div class="text-xl">
+                  <i :class="getProviderIcon(provider)"></i>
+                </div>
+                <span class="font-medium flex-1 min-w-0 truncate">{{ getProviderName(provider) }}</span>
+                <button
+                  class="btn btn-ghost btn-xs text-error"
+                  :title="t('common.delete', '删除')"
+                  @click.stop="deleteProvider(provider)"
+                >
+                  <i class="fas fa-trash"></i>
+                </button>
+              </a>
+            </li>
+          </div>
+
+          <div v-if="missingBuiltinProviders.length > 0" class="mt-4 rounded-box border border-base-300 bg-base-100 p-3">
+            <div class="text-sm font-medium mb-2">{{ t('settings.ai.quickAddBuiltinProviders', '快速添加内置提供商') }}</div>
+            <div class="flex flex-col gap-2">
+              <button
+                v-for="provider in missingBuiltinProviders"
+                :key="provider"
+                class="btn btn-sm btn-outline justify-start"
+                @click="restoreBuiltinProvider(provider)"
+              >
+                <i :class="getProviderIcon(provider)" class="mr-2"></i>
+                {{ getProviderName(provider) }}
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 右侧：配置内容 -->
+        <div class="flex-1">
+
+          <!-- 当前选中的AI提供商配置 -->
+          <div v-if="selectedProviderConfig" class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+            <!-- 左侧：基本配置 -->
+            <div class="space-y-4">
+              <h3 class="text-lg font-semibold border-b pb-2">{{ t('settings.ai.basicConfig') }}</h3>
+
+              <!-- 启用/禁用 -->
+              <div class="form-control">
+                <label class="label cursor-pointer">
+                  <span class="label-text">{{ t('settings.ai.enable') }} {{ getProviderName(selectedAiProvider)
+                  }}</span>
+                  <input type="checkbox" class="toggle toggle-primary" v-model="selectedProviderConfig.enabled"
+                    @change="saveAiConfig">
+                </label>
+              </div>
+
+              <!-- Rig 提供商类型 -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.ai.rigProvider') }}</span>
+                  <span class="label-text-alt text-info">{{ t('settings.ai.rigProviderDescription') }}</span>
+                </label>
+                <SearchableSelect v-model="rigProviderLocal" :options="rigProviderOptions"
+                  :placeholder="t('settings.ai.selectProviderType')"
+                  :search-placeholder="t('settings.ai.searchProviderType')" @change="saveAiConfig" />
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.ai.decideBackendApiFormat') }}</span>
+                </label>
+              </div>
+
+              <!-- API密钥配置 -->
+              <div class="form-control" v-if="needsApiKey(selectedAiProvider)">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.ai.apiKey') }}</span>
+                </label>
+                <div class="input-group">
+                  <input type="password" :placeholder="t('settings.apiKeyPlaceholder')"
+                    class="input input-bordered flex-1" v-model="selectedProviderConfig.api_key" @blur="saveAiConfig">
+                  <button class="btn btn-outline" @click="testConnection(selectedAiProvider)">
+                    <i class="fas fa-plug"></i>
+                    {{ t('settings.testConnection') }}
+                  </button>
+                  <button class="btn btn-outline" @click="refreshModels(selectedAiProvider)">
+                    <i class="fas fa-sync-alt"></i>
+                    {{ t('settings.ai.refreshModels') }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- API Base URL -->
+              <div class="form-control" >
+                <label class="label">
+                  <span class="label-text">{{ t('settings.ai.apiBaseUrl') }}</span>
+                </label>
+                <div class="input-group">
+                  <input type="url" :placeholder="t('settings.ai.apiBaseUrl')" class="input input-bordered" style="width:300px"
+                    v-model="selectedProviderConfig.api_base" @blur="saveAiConfig">
+                  <!-- 为Ollama等不需要API密钥但需要测试连接的提供商添加按钮 -->
+                  <button v-if="!needsApiKey(selectedAiProvider)" class="btn btn-outline"
+                    @click="testConnection(selectedAiProvider)">
+                    <i class="fas fa-plug"></i>
+                    {{ t('settings.testConnection') }}
+                  </button>
+                  <button v-if="!needsApiKey(selectedAiProvider)" class="btn btn-outline"
+                    @click="refreshModels(selectedAiProvider)">
+                    <i class="fas fa-sync-alt"></i>
+                    {{ t('settings.ai.refreshModels') }}
+                  </button>
+                </div>
+              </div>
+
+              <!-- 组织ID (OpenAI) -->
+              <div class="form-control"
+                v-if="selectedAiProvider === 'OpenAI' && selectedProviderConfig && 'organization' in selectedProviderConfig">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.ai.organizationId') }}</span>
+                </label>
+                <input type="text" :placeholder="t('settings.ai.organizationId')" class="input input-bordered"
+                  v-model="(selectedProviderConfig as any).organization" @blur="saveAiConfig">
+              </div>
+
+              <!-- OpenRouter特定配置 -->
+              <div v-if="selectedAiProvider === 'OpenRouter'" class="space-y-4">
+                <!-- HTTP Referer -->
+                <div class="form-control">
+                  <label class="label">
+                    <span class="label-text">{{ t('settings.ai.httpReferer') }}</span>
+                  </label>
+                  <input type="url" placeholder="https://yoursite.com" class="input input-bordered"
+                    v-model="selectedProviderConfig.http_referer" @blur="saveAiConfig">
+                  <label class="label">
+                    <span class="label-text-alt">{{ t('settings.ai.httpRefererDescription') }}</span>
+                  </label>
+                </div>
+
+                <!-- X-Title -->
+                <div class="form-control">
+                  <label class="label">
+                    <span class="label-text">{{ t('settings.ai.appName') }}</span>
+                  </label>
+                  <input type="text" :placeholder="t('settings.ai.appNamePlaceholder')" class="input input-bordered"
+                    v-model="selectedProviderConfig.x_title" @blur="saveAiConfig">
+                  <label class="label">
+                    <span class="label-text-alt">{{ t('settings.ai.appNameDescription') }}</span>
+                  </label>
+                </div>
+              </div>
+
+              <!-- 默认模型选择 -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.ai.defaultModel') }}</span>
+                </label>
+                <EditableSelect v-model="selectedProviderDefaultModel" :options="selectedProviderModelOptions"
+                  :placeholder="t('settings.ai.selectOrInputModel')" 
+                  :custom-value-text="t('settings.ai.useCustomModel')"
+                  :allow-custom="true"
+                  @change="onSelectedProviderModelChange" />
+                <label class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('settings.ai.canInputCustomModel') }}
+                  </span>
+                </label>
+                <div class="flex items-center gap-3">
+                  <button class="btn btn-outline btn-sm" @click="refreshVisionCapabilityCache">
+                    <i class="fas fa-eye"></i>
+                    {{ t('settings.ai.refreshVisionCapabilityCache') }}
+                  </button>
+                  <span class="text-xs text-base-content/60">
+                    {{ t('settings.ai.refreshVisionCapabilityCacheDescription') }}
+                  </span>
+                </div>
+              </div>
+
+              <!-- 最大上下文长度设置 -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.ai.maxContextLength') }}</span>
+                </label>
+                <input 
+                  type="number" 
+                  class="input input-bordered" 
+                  v-model.number="selectedProviderMaxContextLength"
+                  @blur="saveAiConfig"
+                  min="1000"
+                  max="1000000"
+                  step="1000"
+                  placeholder="128000"
+                />
+                <label class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('settings.ai.maxContextLengthHint') }}
+                  </span>
+                </label>
+              </div>
+
+              <!-- 自定义请求头 -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text flex items-center gap-2">
+                    {{ t('settings.ai.customHeaders') }}
+                    <span class="badge badge-sm badge-info">{{ t('settings.ai.optional') }}</span>
+                  </span>
+                </label>
+                <div class="space-y-2">
+                  <div
+                    v-for="row in customHeaderRows"
+                    :key="row.id"
+                    class="grid grid-cols-1 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_2.5rem] gap-2"
+                  >
+                    <input
+                      type="text"
+                      class="input input-bordered input-sm font-mono"
+                      :placeholder="t('settings.ai.customHeaderKeyPlaceholder')"
+                      v-model="row.key"
+                      @blur="saveCustomHeaders"
+                    />
+                    <input
+                      type="text"
+                      class="input input-bordered input-sm font-mono"
+                      :placeholder="t('settings.ai.customHeaderValuePlaceholder')"
+                      v-model="row.value"
+                      @blur="saveCustomHeaders"
+                    />
+                    <button
+                      type="button"
+                      class="btn btn-ghost btn-sm text-error"
+                      :title="t('settings.ai.removeCustomHeader')"
+                      @click="removeCustomHeaderRow(row.id)"
+                    >
+                      <i class="fas fa-trash"></i>
+                    </button>
+                  </div>
+                  <button type="button" class="btn btn-outline btn-sm" @click="addCustomHeaderRow">
+                    <i class="fas fa-plus"></i>
+                    {{ t('settings.ai.addCustomHeader') }}
+                  </button>
+                </div>
+                <label class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('settings.ai.customHeadersDescription') }}
+                  </span>
+                </label>
+                <div v-if="customHeadersError" class="alert alert-error mt-2">
+                  <i class="fas fa-exclamation-triangle"></i>
+                  <span>{{ customHeadersError }}</span>
+                </div>
+              </div>
+
+              <!-- Extra request body -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text flex items-center gap-2">
+                    {{ t('settings.ai.extraBody') }}
+                    <span class="badge badge-sm badge-info">{{ t('settings.ai.optional') }}</span>
+                  </span>
+                </label>
+                <textarea
+                  class="textarea textarea-bordered font-mono text-sm min-h-28"
+                  placeholder='{"enable_thinking": false}'
+                  v-model="extraBodyJson"
+                  @blur="saveExtraBody"
+                  spellcheck="false"
+                ></textarea>
+                <label class="label">
+                  <span class="label-text-alt text-base-content/60">
+                    {{ t('settings.ai.extraBodyDescription') }}
+                  </span>
+                </label>
+                <div v-if="extraBodyError" class="alert alert-error mt-2">
+                  <i class="fas fa-exclamation-triangle"></i>
+                  <span>{{ extraBodyError }}</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- 右侧：高级配置 -->
+            <div class="space-y-4">
+              <h3 class="text-lg font-semibold border-b pb-2">{{ t('settings.ai.advancedConfig') }}</h3>
+
+              <!-- 温度设置 -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.ai.temperature') }}</span>
+                </label>
+                <div class="flex items-center gap-4">
+                  <input v-model.number="settings.ai.temperature" type="range" min="0" max="1" step="0.1"
+                    class="range range-primary flex-1" @change="saveAiConfig" />
+                  <span class="text-sm min-w-[60px]">{{ settings.ai.temperature }}</span>
+                </div>
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.ai.temperatureHint') }}</span>
+                </label>
+              </div>
+
+              <!-- 最大Token设置 -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.ai.maxTokens') }} (Max Generation)</span>
+                </label>
+                <div class="flex items-center gap-4">
+                  <input v-model.number="settings.ai.maxTokens" type="range" min="500" max="8000" step="500"
+                    class="range range-primary flex-1" @change="saveAiConfig" />
+                  <span class="text-sm min-w-[60px]">{{ settings.ai.maxTokens }}</span>
+                </div>
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.ai.maxTokensHint') }}</span>
+                </label>
+              </div>
+
+              <!-- 工具输出限制设置 -->
+              <!-- 输出存储阈值 -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.ai.outputStorageThreshold') }}</span>
+                  <span class="badge badge-info badge-sm">Dynamic Context</span>
+                </label>
+                <div class="flex items-center gap-4">
+                  <input v-model.number="settings.ai.outputStorageThreshold" type="range" min="8000" max="32000" step="1000"
+                    class="range range-info flex-1" @change="saveAiConfig" />
+                  <span class="text-sm min-w-[60px]">{{ (settings.ai.outputStorageThreshold || 16000) / 1000 }}K</span>
+                </div>
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.ai.outputStorageThresholdHint') }}</span>
+                </label>
+              </div>
+
+              <!-- 最大对话轮数设置 -->
+              <div class="form-control">
+                <label class="label">
+                  <span class="label-text">{{ t('settings.ai.maxTurns') }}</span>
+                </label>
+                <div class="flex items-center gap-4">
+                  <input v-model.number="settings.ai.maxTurns" type="range" min="10" max="1000" step="10"
+                    class="range range-accent flex-1" @change="saveAiConfig" />
+                  <span class="text-sm min-w-[60px]">{{ settings.ai.maxTurns || 100 }}</span>
+                </div>
+                <label class="label">
+                  <span class="label-text-alt">{{ t('settings.ai.maxTurnsHint') }}</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 自定义AI提供商 -->
+      <div class="card bg-base-100 shadow-sm mt-6">
+        <div class="card-body">
+          <h3 class="card-title">
+            <i class="fas fa-plus-circle"></i>
+            {{ t('settings.ai.customProvider') }}
+          </h3>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <!-- 提供商唯一名称（ID） -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ t('settings.ai.providerName') }}</span>
+                <span class="label-text-alt text-warning">{{ t('settings.ai.providerNameDescription') }}</span>
+              </label>
+              <input type="text" placeholder="MyCustomProvider" class="input input-bordered"
+                v-model="customProvider.name">
+            </div>
+
+            <!-- Rig 提供商选择 -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ t('settings.ai.rigProvider') }}</span>
+                <span class="label-text-alt text-warning">{{ t('settings.ai.rigProviderDescription') }}</span>
+              </label>
+              <SearchableSelect v-model="customProvider.rig_provider" :options="rigProviderOptions"
+                :placeholder="t('settings.ai.rigProviderPlaceholder')"
+                :search-placeholder="t('settings.ai.rigProviderSearchPlaceholder')" />
+              <label class="label">
+                <span class="label-text-alt">
+                  {{ t('settings.ai.rigProviderDescription') }}
+                </span>
+              </label>
+            </div>
+
+            <!-- API密钥 -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ t('settings.ai.apiKey') }}</span>
+                <span class="label-text-alt text-warning" v-if="customProvider.compat_mode !== 'ollama'">{{
+                  t('settings.ai.apiKeyDescription') }}</span>
+              </label>
+              <input type="password" :placeholder="t('settings.apiKeyPlaceholder')" class="input input-bordered"
+                v-model="customProvider.api_key">
+            </div>
+
+            <!-- API Base URL -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ t('settings.ai.apiBaseUrl') }}</span>
+                <span class="label-text-alt text-warning" v-if="customProvider.compat_mode !== 'ollama'">{{
+                  t('settings.ai.apiBaseUrlDescription') }}</span>
+              </label>
+              <input type="url" placeholder="https://api.example.com/v1" class="input input-bordered"
+                v-model="customProvider.api_base">
+              <label class="label">
+                <span class="label-text-alt">
+                  {{ t('settings.ai.apiBaseUrlExample') }}
+                </span>
+              </label>
+            </div>
+
+            <!-- 模型ID -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ t('settings.ai.modelId') }}</span>
+                <span class="label-text-alt text-warning" v-if="customProvider.compat_mode !== 'ollama'">{{
+                  t('settings.ai.modelIdDescription') }}</span>
+              </label>
+              <input type="text" placeholder="gpt-4o-mini" class="input input-bordered"
+                v-model="customProvider.model_id">
+            </div>
+
+            <!-- 显示名称 -->
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ t('settings.ai.displayName') }}</span>
+                <span class="label-text-alt">{{ t('settings.ai.displayNameDescription') }}</span>
+              </label>
+              <input type="text" :placeholder="t('settings.ai.displayNamePlaceholder')" class="input input-bordered"
+                v-model="customProvider.display_name">
+            </div>
+          </div>
+
+          <!-- 高级选项折叠 -->
+          <div class="collapse collapse-arrow bg-base-200 mt-4">
+            <input type="checkbox" />
+            <div class="collapse-title font-medium">
+              <i class="fas fa-cogs mr-2"></i>{{ t('settings.ai.advancedOptions') }}
+            </div>
+            <div class="collapse-content">
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <!-- 额外请求头 -->
+                <div class="form-control md:col-span-2">
+                  <label class="label">
+                    <span class="label-text">{{ t('settings.ai.extraHeaders') }}</span>
+                  </label>
+                  <textarea class="textarea textarea-bordered font-mono text-sm h-24"
+                    placeholder='{"X-Custom-Header": "value"}' v-model="customProvider.extra_headers_json"></textarea>
+                </div>
+
+                <!-- 额外请求体 -->
+                <div class="form-control md:col-span-2">
+                  <label class="label">
+                    <span class="label-text">{{ t('settings.ai.extraBody') }}</span>
+                  </label>
+                  <textarea class="textarea textarea-bordered font-mono text-sm h-24"
+                    placeholder='{"enable_thinking": false}' v-model="customProvider.extra_body_json"></textarea>
+                </div>
+
+                <!-- 超时设置 -->
+                <div class="form-control">
+                  <label class="label">
+                    <span class="label-text">{{ t('settings.ai.timeout') }}</span>
+                  </label>
+                  <input type="number" class="input input-bordered" v-model.number="customProvider.timeout" min="10"
+                    max="600" placeholder="120">
+                </div>
+
+                <!-- 最大重试次数 -->
+                <div class="form-control">
+                  <label class="label">
+                    <span class="label-text">{{ t('settings.ai.maxRetries') }}</span>
+                  </label>
+                  <input type="number" class="input input-bordered" v-model.number="customProvider.max_retries" min="0"
+                    max="5" placeholder="3">
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- 验证提示 -->
+          <div v-if="customProviderValidationError" class="alert alert-error mt-4">
+            <i class="fas fa-exclamation-triangle"></i>
+            <span>{{ customProviderValidationError }}</span>
+          </div>
+
+          <div class="card-actions justify-end mt-4">
+            <button class="btn btn-outline" @click="testCustomProvider"
+              :disabled="!!customProviderValidationError || testingCustomProvider">
+              <span v-if="testingCustomProvider" class="loading loading-spinner loading-sm"></span>
+              <i v-else class="fas fa-vial"></i>
+              {{ t('settings.ai.testCustomProvider') }}
+            </button>
+            <button class="btn btn-primary" @click="addCustomProvider"
+              :disabled="!!customProviderValidationError || addingCustomProvider">
+              <span v-if="addingCustomProvider" class="loading loading-spinner loading-sm"></span>
+              <i v-else class="fas fa-plus"></i>
+              {{ t('settings.ai.addCustomProvider') }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 可用模型列表 -->
+      <div class="collapse collapse-arrow bg-base-100 shadow-sm border mt-6">
+        <input type="checkbox" v-model="isAvailableModelsExpanded" />
+        <div class="collapse-title text-lg font-semibold flex items-center gap-2">
+          {{ t('settings.ai.availableModels') }}
+          <span class="badge badge-ghost badge-sm">{{ selectedProviderConfig?.models?.length || 0 }}</span>
+        </div>
+        <div class="collapse-content">
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 pt-2">
+            <div v-for="model in selectedProviderConfig?.models" :key="model.id"
+              class="card bg-base-100 shadow-sm border">
+              <div class="card-body p-4">
+                <div class="flex justify-between items-start mb-2">
+                  <h4 class="card-title text-sm">{{ model.name }}</h4>
+                  <div :class="model.is_available ? 'badge badge-success badge-sm' : 'badge badge-error badge-sm'">
+                    {{ model.is_available ? t('settings.ai.available') : t('settings.ai.unavailable') }}
+                  </div>
+                </div>
+
+                <p class="text-xs text-base-content/70 mb-3">{{ model.description }}</p>
+
+                <div class="space-y-2">
+                  <div class="flex justify-between text-xs">
+                    <span class="text-base-content/60">{{ t('settings.ai.contextLength') }}:</span>
+                    <span>{{ model.context_length?.toLocaleString() || 'N/A' }}</span>
+                  </div>
+
+                  <div class="flex flex-wrap gap-1">
+                    <div v-if="model.supports_streaming" class="badge badge-primary badge-xs">
+                      {{ t('settings.ai.streaming') }}
+                    </div>
+                    <div v-if="model.supports_tools" class="badge badge-secondary badge-xs">
+                      {{ t('settings.ai.tools') }}
+                    </div>
+                    <div
+                      class="badge badge-xs"
+                      :class="getVisionCapabilityBadgeClass(getModelVisionCapabilityState(selectedAiProvider, model))"
+                      :title="getModelVisionCapabilityTitle(selectedAiProvider, model)"
+                    >
+                      {{ getVisionCapabilityLabel(getModelVisionCapabilityState(selectedAiProvider, model)) }}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tavily Search 设置 -->
+      <div class="card bg-base-100 shadow-sm mt-6">
+        <div class="card-body p-4">
+          <div class="flex items-center gap-3 mb-2">
+            <i class="fas fa-search text-primary text-lg"></i>
+            <h3 class="font-semibold">Tavily Search</h3>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">Tavily API Key</span>
+              </label>
+              <input v-model="tavilyApiKeyLocal" type="password" class="input input-bordered" placeholder="tvly-..." />
+              <label class="label">
+                <span class="label-text-alt">{{ t('settings.ai.tavilyApiKeyDescription') }}</span>
+              </label>
+            </div>
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ t('settings.ai.defaultMaxResults') }}</span>
+              </label>
+              <input v-model.number="tavilyMaxResultsLocal" type="number" min="1" max="20"
+                class="input input-bordered w-40" />
+            </div>
+          </div>
+          <div class="flex justify-end mt-3">
+            <button class="btn btn-primary btn-sm" @click="saveAiConfig">
+              <i class="fas fa-save mr-1"></i>
+              {{ t('settings.ai.save') }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 阿里云 OSS 配置（用于 DashScope 文件上传） -->
+      <div class="card bg-base-100 shadow-sm mt-6">
+        <div class="card-body p-4">
+          <div class="flex items-center gap-3 mb-2">
+            <i class="fas fa-cloud-upload-alt text-primary text-lg"></i>
+            <h3 class="font-semibold">{{ t('settings.ai.aliyunDashScope') }}</h3>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ t('settings.ai.dashscopeApiKey') }}</span>
+              </label>
+              <input v-model="aliyunApiKeyLocal" type="password" class="input input-bordered" placeholder="sk-..." />
+              <label class="label">
+                <span class="label-text-alt">{{ t('settings.ai.dashscopeApiKeyDescription') }}</span>
+              </label>
+            </div>
+            <div class="form-control">
+              <label class="label">
+                <span class="label-text">{{ t('settings.ai.defaultModel') }}</span>
+              </label>
+              <input v-model="aliyunDefaultModelLocal" type="text" class="input input-bordered"
+                placeholder="qwen-vl-plus" />
+              <label class="label">
+                <span class="label-text-alt">{{ t('settings.ai.dashscopeDefaultModelDescription') }}</span>
+              </label>
+            </div>
+          </div>
+          <div class="flex justify-end mt-3 gap-2">
+            <button class="btn btn-outline btn-sm" @click="testAliyunConnection" :disabled="testingAliyun">
+              <span v-if="testingAliyun" class="loading loading-spinner loading-sm"></span>
+              <i v-else class="fas fa-plug mr-1"></i>
+              {{ t('settings.ai.testConnection') }}
+            </button>
+            <button class="btn btn-primary btn-sm" @click="saveAiConfig">
+              <i class="fas fa-save mr-1"></i>
+              {{ t('settings.ai.save') }}
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- AI使用统计 -->
+      <div class="card bg-base-100 shadow-sm mt-6">
+        <div class="card-body">
+          <div class="flex justify-between items-center mb-4">
+            <h3 class="card-title">
+              <i class="fas fa-chart-bar"></i>
+              {{ t('settings.ai.usageStats') }}
+            </h3>
+            <div class="flex gap-2">
+              <button class="btn btn-ghost btn-sm" @click="loadDetailedStats">
+                <i class="fas fa-sync-alt mr-1"></i>
+                {{ t('settings.ai.refresh') }}
+              </button>
+              <button class="btn btn-ghost btn-sm text-error" @click="clearUsageStats">
+                <i class="fas fa-trash-alt mr-1"></i>
+                {{ t('settings.ai.clearStats', 'Clear Stats') }}
+              </button>
+            </div>
+          </div>
+
+          <!-- 统计概览 -->
+          <div class="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+            <div class="stat bg-base-200 rounded-lg">
+              <div class="stat-title">{{ t('settings.ai.totalRequests') }}</div>
+              <div class="stat-value text-primary">{{ totalRequests }}</div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg">
+              <div class="stat-title">{{ t('settings.ai.totalTokens') }}</div>
+              <div class="stat-value text-secondary">{{ totalTokensFormatted }}</div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg">
+              <div class="stat-title">{{ t('settings.ai.totalCost') }}</div>
+              <div class="stat-value text-accent">${{ totalCost.toFixed(2) }}</div>
+            </div>
+            <div class="stat bg-base-200 rounded-lg">
+              <div class="stat-title">{{ t('settings.ai.avgCostPerRequest') }}</div>
+              <div class="stat-value text-info">${{ avgCostPerRequest }}</div>
+            </div>
+          </div>
+
+          <!-- 切换视图：按提供商 / 按模型 -->
+          <div class="tabs tabs-boxed mb-4">
+            <a class="tab" :class="{ 'tab-active': statsView === 'provider' }" @click="statsView = 'provider'">
+              <i class="fas fa-server mr-2"></i>
+              {{ t('settings.ai.byProvider') }}
+            </a>
+            <a class="tab" :class="{ 'tab-active': statsView === 'model' }" @click="statsView = 'model'">
+              <i class="fas fa-brain mr-2"></i>
+              {{ t('settings.ai.byModel') }}
+            </a>
+          </div>
+
+          <!-- 按提供商统计 -->
+          <div v-if="statsView === 'provider'" class="overflow-x-auto">
+            <table class="table table-compact w-full">
+              <thead>
+                <tr>
+                  <th>{{ t('settings.providers') }}</th>
+                  <th class="text-right">{{ t('settings.ai.inputTokens') }}</th>
+                  <th class="text-right">{{ t('settings.ai.outputTokens') }}</th>
+                  <th class="text-right">{{ t('settings.ai.totalTokens') }}</th>
+                  <th class="text-right">{{ t('settings.ai.estimatedCost') }}</th>
+                  <th class="text-right">{{ t('settings.ai.percentage') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="(usage, provider) in aiUsageStats" :key="provider" class="hover">
+                  <td>
+                    <div class="flex items-center gap-2">
+                      <i :class="getProviderIcon(String(provider))"></i>
+                      <span class="font-semibold">{{ getProviderName(String(provider)) }}</span>
+                    </div>
+                  </td>
+                  <td class="text-right">{{ usage.input_tokens?.toLocaleString() }}</td>
+                  <td class="text-right">{{ usage.output_tokens?.toLocaleString() }}</td>
+                  <td class="text-right font-semibold">{{ usage.total_tokens?.toLocaleString() }}</td>
+                  <td class="text-right">${{ (usage.cost || 0).toFixed(4) }}</td>
+                  <td class="text-right">
+                    <div class="flex items-center gap-2 justify-end">
+                      <progress class="progress progress-primary w-20" :value="usage.total_tokens" :max="maxTokens"></progress>
+                      <span class="text-sm">{{ ((usage.total_tokens / maxTokens) * 100).toFixed(1) }}%</span>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+              <tfoot v-if="Object.keys(aiUsageStats).length > 0">
+                <tr class="font-bold">
+                  <td>{{ t('settings.ai.total') }}</td>
+                  <td class="text-right">{{ totalInputTokens.toLocaleString() }}</td>
+                  <td class="text-right">{{ totalOutputTokens.toLocaleString() }}</td>
+                  <td class="text-right">{{ (totalInputTokens + totalOutputTokens).toLocaleString() }}</td>
+                  <td class="text-right">${{ totalCost.toFixed(4) }}</td>
+                  <td></td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+
+          <!-- 按模型统计 -->
+          <div v-if="statsView === 'model'" class="overflow-x-auto">
+            <table class="table table-compact w-full">
+              <thead>
+                <tr>
+                  <th>{{ t('settings.ai.provider') }}</th>
+                  <th>{{ t('settings.ai.model') }}</th>
+                  <th class="text-right">{{ t('settings.ai.inputTokens') }}</th>
+                  <th class="text-right">{{ t('settings.ai.outputTokens') }}</th>
+                  <th class="text-right">{{ t('settings.ai.totalTokens') }}</th>
+                  <th class="text-right">{{ t('settings.ai.estimatedCost') }}</th>
+                  <th class="text-right">{{ t('settings.ai.lastUsed') }}</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="stat in detailedStats" :key="`${stat.provider}-${stat.model}`" class="hover">
+                  <td>
+                    <div class="flex items-center gap-2">
+                      <i :class="getProviderIcon(stat.provider)"></i>
+                      <span>{{ getProviderName(stat.provider) }}</span>
+                    </div>
+                  </td>
+                  <td>
+                    <span class="badge badge-ghost">{{ stat.model }}</span>
+                  </td>
+                  <td class="text-right">{{ stat.input_tokens?.toLocaleString() }}</td>
+                  <td class="text-right">{{ stat.output_tokens?.toLocaleString() }}</td>
+                  <td class="text-right font-semibold">{{ stat.total_tokens?.toLocaleString() }}</td>
+                  <td class="text-right">${{ (stat.cost || 0).toFixed(4) }}</td>
+                  <td class="text-right text-sm">{{ formatLastUsed(stat.last_used) }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- 空状态 -->
+          <div v-if="Object.keys(aiUsageStats).length === 0 && detailedStats.length === 0" class="text-center py-8 text-base-content/60">
+            <i class="fas fa-chart-line text-4xl mb-4"></i>
+            <p>{{ t('settings.ai.noUsageData') }}</p>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+  </div>
+</template>
+
+<script setup lang="ts">
+import { computed, ref, watch } from 'vue'
+import { useI18n } from 'vue-i18n'
+import SearchableSelect from '@/components/SearchableSelect.vue'
+import EditableSelect from '@/components/EditableSelect.vue'
+import { getModelVisionCapability, type ModelVisionCapability } from '@/services/aiModelCapabilities'
+import {
+  buildExtraHeadersFromInputRows,
+  createExtraHeaderInputRows,
+  formatExtraBodyJson,
+  type ExtraHeaderInputRow,
+  getEnabledProviders,
+  getProviderIcon,
+  getProviderModels,
+  getProviderName,
+  needsApiKey,
+  parseExtraBodyJson,
+  rigProviderOptions,
+} from './aiSettingsProviderSupport'
+import {
+  formatUsageLastUsed,
+  formatUsageTotalTokens,
+  maxUsageTokens,
+  totalUsageCost,
+  totalUsageInputTokens,
+  totalUsageOutputTokens,
+} from './aiSettingsStatsSupport'
+import { useAiSettingsManualEditor } from './useAiSettingsManualEditor'
+import { useAiSettingsServiceIntegrations } from './useAiSettingsServiceIntegrations'
+
+const { t } = useI18n()
+const isAvailableModelsExpanded = ref(false)
+
+// Props
+interface Props {
+  aiServiceStatus: any[]
+  aiConfig: any
+  selectedAiProvider: string
+  settings: any
+  customProvider: any
+  aiUsageStats: any
+  saving: boolean
+  testingCustomProvider?: boolean
+  addingCustomProvider?: boolean
+}
+
+const props = withDefaults(defineProps<Props>(), {
+  testingCustomProvider: false,
+  addingCustomProvider: false,
+})
+
+// Emits
+interface Emits {
+  'update:selectedAiProvider': [value: string]
+  'update:settings': [value: any]
+  'update:customProvider': [value: any]
+  'update:aiConfig': [value: any]
+  'testConnection': [provider: string]
+  'testCustomProvider': []
+  'addCustomProvider': []
+  'deleteProvider': [provider: string]
+  'restoreBuiltinProvider': [provider: string]
+  'saveAiConfig': []
+  'refreshModels': [provider: string]
+  'applyManualConfig': [config: any]
+  'setDefaultProvider': [provider: string]
+  'setDefaultChatModel': [model: string]
+  'clearUsageStats': []
+  'refreshVisionCapabilityCache': [payload: { provider: string; apiBase?: string | null; rigProvider?: string | null }]
+}
+
+const emit = defineEmits<Emits>()
+
+const aiConfigRef = computed(() => props.aiConfig)
+const {
+  applyAndExitFullscreen,
+  applyManualConfig,
+  configError,
+  configValid,
+  editorContainer,
+  exitFullscreen,
+  formatConfig,
+  fullscreenEditorContainer,
+  isFullscreen,
+  manualConfigText,
+  resetToDefault,
+  toggleFullscreen,
+  useGuiMode,
+  validateConfig,
+} = useAiSettingsManualEditor({
+  aiConfig: aiConfigRef,
+  emitApplyManualConfig: (config) => {
+    emit('applyManualConfig', config)
+  },
+})
+
+const {
+  aliyunApiKeyLocal,
+  aliyunDefaultModelLocal,
+  detailedStats,
+  loadDetailedStats,
+  saveServiceConfigs,
+  statsView,
+  tavilyApiKeyLocal,
+  tavilyMaxResultsLocal,
+  testAliyunConnection,
+  testingAliyun,
+  totalRequests,
+} = useAiSettingsServiceIntegrations()
+
+// Computed
+const selectedAiProvider = computed({
+  get: () => props.selectedAiProvider,
+  set: (value: string) => {
+    emit('update:selectedAiProvider', value)
+  }
+})
+
+const sortedProviderKeys = computed(() => {
+  const providers = props.aiConfig?.providers
+  if (!providers || typeof providers !== 'object') return []
+  return Object.keys(providers).sort((a, b) =>
+    a.localeCompare(b, 'en', { sensitivity: 'base', numeric: true })
+  )
+})
+
+const builtinProviderNames = [
+  'Anthropic',
+  'OpenAI',
+  'Azure OpenAI',
+  'Cohere',
+  'DeepSeek',
+  'EternalAI',
+  'Google Gemini',
+  'Galadriel',
+  'Groq',
+  'Hyperbolic',
+  'Mira',
+  'Moonshot',
+  'Ollama',
+  'Perplexity',
+  'TogetherAI',
+  'OpenRouter',
+  'xAI',
+]
+
+const builtinProviderKeys = new Set([
+  'anthropic',
+  'openai',
+  'azure openai',
+  'cohere',
+  'deepseek',
+  'eternalai',
+  'google gemini',
+  'galadriel',
+  'groq',
+  'hyperbolic',
+  'mira',
+  'moonshot',
+  'ollama',
+  'perplexity',
+  'togetherai',
+  'openrouter',
+  'xai',
+])
+
+const missingBuiltinProviders = computed(() => {
+  const existingProviders = new Set(
+    Object.keys(props.aiConfig?.providers || {}).map((provider) => provider.toLowerCase()),
+  )
+  return builtinProviderNames.filter((provider) => !existingProviders.has(provider.toLowerCase()))
+})
+
+const settings = computed({
+  get: () => props.settings ?? { ai: { temperature: 0.7, maxTokens: 2000 } },
+  set: (value) => emit('update:settings', value)
+})
+
+const customProvider = computed({
+  get: () => props.customProvider,
+  set: (value) => emit('update:customProvider', value)
+})
+
+// 是否正在测试/添加自定义提供商
+const testingCustomProvider = computed(() => props.testingCustomProvider)
+const addingCustomProvider = computed(() => props.addingCustomProvider)
+
+// 自定义提供商验证错误
+const customProviderValidationError = computed(() => {
+  const p = props.customProvider
+  if (!p.name || !p.name.trim()) {
+    return t('settings.ai.providerNameDescription')
+  }
+  // 检查名称是否与现有提供商冲突
+  const existingProviders = Object.keys(props.aiConfig?.providers || {})
+  const nameLower = p.name.trim().toLowerCase()
+  if (existingProviders.some(k => k.toLowerCase() === nameLower)) {
+    return `提供商名称 "${p.name}" 已存在，请使用其他名称`
+  }
+  if (!p.rig_provider || !p.rig_provider.trim()) {
+    return '请选择 Rig 提供商类型'
+  }
+  if (!p.api_base || !p.api_base.trim()) {
+    return '请输入 API Base URL'
+  }
+  if (!p.model_id || !p.model_id.trim()) {
+    return '请输入默认模型 ID'
+  }
+  // 验证 extra_headers_json 是否为有效 JSON
+  if (p.extra_headers_json && p.extra_headers_json.trim()) {
+    try {
+      JSON.parse(p.extra_headers_json)
+    } catch {
+      return '额外请求头 JSON 格式无效'
+    }
+  }
+  const extraBodyResult = parseExtraBodyJson(p.extra_body_json || '')
+  if (extraBodyResult.ok === false) {
+    return extraBodyResult.reason === 'invalid-json'
+      ? t('settings.ai.extraBodyInvalidJson')
+      : t('settings.ai.extraBodyMustBeObject')
+  }
+  return ''
+})
+
+const selectedProviderConfig = computed(() => {
+  return props.aiConfig?.providers?.[props.selectedAiProvider]
+})
+
+const getModelVisionCapabilityState = (provider: string, model: any): ModelVisionCapability => {
+  return getModelVisionCapability(provider, model)
+}
+
+const getVisionCapabilityLabel = (capability: ModelVisionCapability): string => {
+  switch (capability) {
+    case 'supported':
+      return t('settings.ai.visionCapabilitySupported')
+    case 'unsupported':
+      return t('settings.ai.visionCapabilityUnsupported')
+    default:
+      return t('settings.ai.visionCapabilityUnknown')
+  }
+}
+
+const getVisionCapabilityBadgeClass = (capability: ModelVisionCapability): string => {
+  switch (capability) {
+    case 'supported':
+      return 'badge-accent'
+    case 'unsupported':
+      return 'badge-error'
+    default:
+      return 'badge-ghost'
+  }
+}
+
+const getVisionCapabilityHint = (capability: ModelVisionCapability): string => {
+  switch (capability) {
+    case 'supported':
+      return t('settings.ai.visionCapabilitySupportedHint')
+    case 'unsupported':
+      return t('settings.ai.visionCapabilityUnsupportedHint')
+    default:
+      return t('settings.ai.visionCapabilityUnknownHint')
+  }
+}
+
+const getVisionCapabilitySourceLabel = (source?: string | null): string => {
+  switch (source) {
+    case 'provider_metadata':
+      return t('settings.ai.visionCapabilitySourceProviderMetadata')
+    case 'runtime_probe':
+      return t('settings.ai.visionCapabilitySourceRuntimeProbe')
+    case 'local_registry':
+      return t('settings.ai.visionCapabilitySourceLocalRegistry')
+    default:
+      return ''
+  }
+}
+
+const getModelVisionCapabilityTitle = (provider: string, model: any): string => {
+  const capability = getModelVisionCapabilityState(provider, model)
+  const lines = [getVisionCapabilityHint(capability)]
+  const sourceLabel = getVisionCapabilitySourceLabel(model?.vision_capability_source)
+  if (sourceLabel) {
+    lines.push(sourceLabel)
+  }
+  const evidence = typeof model?.vision_capability_evidence === 'string'
+    ? model.vision_capability_evidence.trim()
+    : ''
+  if (evidence) {
+    lines.push(evidence)
+  }
+  return lines.join('\n')
+}
+
+const formatModelOptionLabel = (provider: string, model: any): string => {
+  const capability = getModelVisionCapabilityState(provider, model)
+  return `${model.name} [${getVisionCapabilityLabel(capability)}]`
+}
+
+const formatModelOptionDescription = (provider: string, model: any): string => {
+  const description = typeof model?.description === 'string' ? model.description.trim() : ''
+  const capabilityHint = getVisionCapabilityHint(getModelVisionCapabilityState(provider, model))
+  return description ? `${description} · ${capabilityHint}` : capabilityHint
+}
+
+const rigProviderLocal = computed({
+  get: () => selectedProviderConfig.value?.rig_provider || '',
+  set: (value: string) => {
+    const providerKey = selectedAiProvider.value
+    if (providerKey && props.aiConfig.providers && props.aiConfig.providers[providerKey]) {
+      const updatedConfig = JSON.parse(JSON.stringify(props.aiConfig))
+      if (updatedConfig.providers[providerKey]) {
+        updatedConfig.providers[providerKey].rig_provider = value
+        emit('update:aiConfig', updatedConfig)
+      }
+    }
+  }
+})
+
+// 自定义请求头
+type CustomHeaderRow = ExtraHeaderInputRow & { id: string }
+
+let customHeaderRowId = 0
+const customHeaderRows = ref<CustomHeaderRow[]>([])
+const customHeadersError = ref('')
+const extraBodyJson = ref('')
+const extraBodyError = ref('')
+
+const createCustomHeaderRow = (row: ExtraHeaderInputRow = { key: '', value: '' }): CustomHeaderRow => ({
+  id: `custom-header-${customHeaderRowId += 1}`,
+  key: row.key,
+  value: row.value,
+})
+
+// 加载自定义 headers
+const loadCustomHeaders = () => {
+  customHeadersError.value = ''
+  const provider = selectedProviderConfig.value
+  const rows = createExtraHeaderInputRows(provider?.extra_headers)
+  customHeaderRows.value = rows.length > 0
+    ? rows.map((row) => createCustomHeaderRow(row))
+    : [createCustomHeaderRow()]
+}
+
+const loadExtraBody = () => {
+  extraBodyError.value = ''
+  extraBodyJson.value = formatExtraBodyJson(selectedProviderConfig.value?.extra_body)
+}
+
+const addCustomHeaderRow = () => {
+  customHeaderRows.value.push(createCustomHeaderRow())
+}
+
+const removeCustomHeaderRow = (rowId: string) => {
+  customHeaderRows.value = customHeaderRows.value.filter((row) => row.id !== rowId)
+  if (customHeaderRows.value.length === 0) {
+    customHeaderRows.value = [createCustomHeaderRow()]
+  }
+  saveCustomHeaders()
+}
+
+// 保存自定义 headers
+const saveCustomHeaders = () => {
+  customHeadersError.value = ''
+  const providerKey = selectedAiProvider.value
+  
+  if (!providerKey || !props.aiConfig.providers || !props.aiConfig.providers[providerKey]) {
+    return
+  }
+
+  const result = buildExtraHeadersFromInputRows(customHeaderRows.value)
+  if (result.ok === false) {
+    if (result.reason === 'missing-key') {
+      customHeadersError.value = t('settings.ai.customHeaderKeyRequired')
+      return
+    }
+    customHeadersError.value = t('settings.ai.customHeaderDuplicateKey').replace('{key}', result.key || '')
+    return
+  }
+
+  const updatedConfig = JSON.parse(JSON.stringify(props.aiConfig))
+  const headers = result.headers
+  if (!updatedConfig.providers[providerKey]) {
+    return
+  }
+
+  if (Object.keys(headers).length > 0) {
+    updatedConfig.providers[providerKey].extra_headers = headers
+  } else {
+    delete updatedConfig.providers[providerKey].extra_headers
+  }
+  emit('update:aiConfig', updatedConfig)
+  saveAiConfig()
+}
+
+const saveExtraBody = () => {
+  extraBodyError.value = ''
+  const providerKey = selectedAiProvider.value
+
+  if (!providerKey || !props.aiConfig.providers || !props.aiConfig.providers[providerKey]) {
+    return
+  }
+
+  const result = parseExtraBodyJson(extraBodyJson.value)
+  if (result.ok === false) {
+    extraBodyError.value = result.reason === 'invalid-json'
+      ? t('settings.ai.extraBodyInvalidJson')
+      : t('settings.ai.extraBodyMustBeObject')
+    return
+  }
+
+  const updatedConfig = JSON.parse(JSON.stringify(props.aiConfig))
+  if (!updatedConfig.providers[providerKey]) {
+    return
+  }
+
+  if (result.body && Object.keys(result.body).length > 0) {
+    updatedConfig.providers[providerKey].extra_body = result.body
+  } else {
+    delete updatedConfig.providers[providerKey].extra_body
+  }
+  emit('update:aiConfig', updatedConfig)
+  saveAiConfig()
+}
+
+// 监听选中的提供商变化，加载其自定义 headers 和 extra_body
+watch(() => props.selectedAiProvider, () => {
+  loadCustomHeaders()
+  loadExtraBody()
+}, { immediate: true })
+
+watch(() => selectedProviderConfig.value?.extra_body, () => {
+  loadExtraBody()
+}, { deep: true })
+
+// 默认 Provider 选择
+const defaultProviderLocal = ref('')
+// 默认 Chat 模型选择
+const defaultChatModelLocal = ref('')
+
+watch(() => props.aiConfig, (cfg: any) => {
+
+  const dp = (cfg && (cfg as any).default_llm_provider) || 'openai'
+  // 查找匹配的提供商名称（不区分大小写）
+  const matchedProvider = Object.keys(cfg?.providers || {}).find(key =>
+    key.toLowerCase() === String(dp).toLowerCase()
+  )
+  defaultProviderLocal.value = matchedProvider || String(dp)
+
+  // 初始化默认 LLM 模型
+  const dcm = (cfg && (cfg as any).default_llm_model) || ''
+  if (dcm && dcm.includes('/')) {
+    const slashIndex = dcm.indexOf('/')
+    const modelName = slashIndex !== -1 ? dcm.substring(slashIndex + 1) : dcm
+    defaultChatModelLocal.value = modelName || ''
+  } else {
+    defaultChatModelLocal.value = String(dcm)
+  }
+}, { immediate: true, deep: true })
+
+const onChangeDefaultProvider = async () => {
+  try {
+    const provider = defaultProviderLocal.value
+    // 发送小写格式的提供商名称给后端
+    emit('setDefaultProvider', provider.toLowerCase())
+
+    // 当提供商变化时，清空默认模型选择
+    defaultChatModelLocal.value = ''
+    emit('setDefaultChatModel', '')
+  } catch (e) {
+    console.error('Failed to set default provider', e)
+  }
+}
+
+const onChangeDefaultChatModel = async () => {
+  try {
+    const model = defaultChatModelLocal.value
+    emit('setDefaultChatModel', model)
+  } catch (e) {
+    console.error('Failed to set default chat model', e)
+  }
+}
+
+// Provider 选项（用于可搜索下拉）
+const providerOptions = computed(() => {
+  return getEnabledProviders(props.aiConfig).map(provider => ({
+    value: provider,
+    label: getProviderName(provider),
+    description: ''
+  }))
+})
+
+// Chat 模型选项（用于可搜索下拉）
+const chatModelOptions = computed(() => {
+  const models = getProviderModels(props.aiConfig, defaultProviderLocal.value)
+  return models.map((model: any) => ({
+    value: model.id,
+    label: formatModelOptionLabel(defaultProviderLocal.value, model),
+    description: formatModelOptionDescription(defaultProviderLocal.value, model)
+  }))
+})
+
+// 选中提供商的模型选项（用于可搜索下拉）
+const selectedProviderModelOptions = computed(() => {
+  const models = selectedProviderConfig.value?.models || []
+  return models.map((model: any) => ({
+    value: model.id,
+    label: formatModelOptionLabel(selectedAiProvider.value, model),
+    description: formatModelOptionDescription(selectedAiProvider.value, model)
+  }))
+})
+
+// 选中提供商的默认模型（双向绑定）
+const selectedProviderDefaultModel = computed({
+  get: () => selectedProviderConfig.value?.default_model || '',
+  set: (value: string) => {
+    if (selectedProviderConfig.value) {
+      selectedProviderConfig.value.default_model = value
+    }
+  }
+})
+
+// 选中提供商的最大上下文长度（双向绑定）
+const selectedProviderMaxContextLength = computed({
+  get: () => selectedProviderConfig.value?.max_context_length || 128000,
+  set: (value: number) => {
+    if (selectedProviderConfig.value) {
+      selectedProviderConfig.value.max_context_length = value
+    }
+  }
+})
+
+// 提供商默认模型变更处理
+const onSelectedProviderModelChange = () => {
+  saveAiConfig()
+}
+
+const testConnection = (provider: string) => {
+  emit('testConnection', provider)
+}
+
+const refreshModels = (provider: string) => {
+  emit('refreshModels', provider)
+}
+
+const refreshVisionCapabilityCache = () => {
+  if (!selectedAiProvider.value) {
+    return
+  }
+  emit('refreshVisionCapabilityCache', {
+    provider: selectedAiProvider.value,
+    apiBase: selectedProviderConfig.value?.api_base || null,
+    rigProvider: selectedProviderConfig.value?.rig_provider || null,
+  })
+}
+
+const testCustomProvider = () => {
+  emit('testCustomProvider')
+}
+
+const addCustomProvider = () => {
+  emit('addCustomProvider')
+}
+
+const deleteProvider = (provider: string) => {
+  emit('deleteProvider', provider)
+}
+
+const restoreBuiltinProvider = (provider: string) => {
+  emit('restoreBuiltinProvider', provider)
+}
+
+const clearUsageStats = () => {
+  emit('clearUsageStats')
+}
+
+const saveAiConfig = async () => {
+  await saveServiceConfigs()
+  emit('saveAiConfig')
+}
+
+// 统计计算属性
+const totalInputTokens = computed<number>(() => {
+  return totalUsageInputTokens(props.aiUsageStats)
+})
+
+const totalOutputTokens = computed<number>(() => {
+  return totalUsageOutputTokens(props.aiUsageStats)
+})
+
+const totalCost = computed<number>(() => {
+  return totalUsageCost(props.aiUsageStats)
+})
+
+const maxTokens = computed<number>(() => {
+  return maxUsageTokens(props.aiUsageStats)
+})
+
+const totalTokensFormatted = computed<string>(() => {
+  return formatUsageTotalTokens(totalInputTokens.value + totalOutputTokens.value)
+})
+
+const avgCostPerRequest = computed<string>(() => {
+  if (totalRequests.value === 0) return '0.0000'
+  return (totalCost.value / totalRequests.value).toFixed(4)
+})
+
+// 格式化最后使用时间
+const formatLastUsed = (timestamp: string | null) => {
+  return formatUsageLastUsed(timestamp, (key, params) => t(key, params))
+}
+
+</script>
+
+<style scoped>
+.ai-settings {
+  @apply space-y-6;
+}
+
+.card {
+  @apply transition-all duration-200 hover:shadow-md;
+}
+
+.stat {
+  @apply transition-all duration-200 hover:scale-105;
+}
+
+.tab {
+  @apply transition-all duration-200;
+}
+
+.tab:hover {
+  @apply bg-base-300;
+}
+
+.tab-active {
+  @apply bg-primary text-primary-content;
+}
+
+.editor-container {
+  height: 24rem;
+}
+
+.editor-container :deep(.cm-editor) {
+  height: 100%;
+  font-size: 0.875rem;
+}
+
+.editor-container :deep(.cm-scroller) {
+  overflow: auto;
+}
+
+/* 全屏按钮样式 */
+.fullscreen-btn {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 10;
+  padding: 0.5rem;
+  border-radius: 0.375rem;
+  background: rgba(255, 255, 255, 0.1);
+  color: #9ca3af;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.fullscreen-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+
+/* 全屏编辑器样式 */
+.fullscreen-editor-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.8);
+  z-index: 9999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.fullscreen-editor-container {
+  width: 100%;
+  height: 100%;
+  max-width: 1400px;
+  background: var(--fallback-b1, oklch(var(--b1)));
+  border-radius: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.fullscreen-editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid var(--fallback-b3, oklch(var(--b3)));
+}
+
+.fullscreen-editor-content {
+  flex: 1;
+  overflow: hidden;
+}
+
+.fullscreen-editor-content :deep(.cm-editor) {
+  height: 100%;
+  font-size: 0.875rem;
+}
+
+.fullscreen-editor-content :deep(.cm-scroller) {
+  overflow: auto;
+}
+
+.fullscreen-editor-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 1rem 1.5rem;
+  border-top: 1px solid var(--fallback-b3, oklch(var(--b3)));
+}
+</style>

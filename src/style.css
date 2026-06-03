@@ -1,0 +1,352 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* 自定义样式 */
+@layer base {
+  :root {
+    --app-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  html {
+    font-family: var(--app-font-sans);
+    /* 设置根字体大小为系统设置，默认 14px */
+    font-size: var(--font-size-base, 14px);
+  }
+  
+  body {
+    @apply min-h-screen bg-base-100 text-base-content;
+    /* 继承根字体大小 */
+    font-size: inherit;
+  }
+
+  /* 全局滚动条样式 */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--fallback-b3,oklch(var(--b3)/1));
+    border-radius: 8px;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--fallback-b2,oklch(var(--b2)/1));
+    border-radius: 8px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--fallback-n,oklch(var(--n)/1));
+  }
+}
+
+@layer components {
+  /* 活动路由样式 */
+  .router-link-active {
+    @apply bg-primary/10 text-primary;
+  }
+
+  /* 悬浮聊天框样式 */
+  .floating-chat {
+    @apply fixed z-50 bg-base-100 border border-base-300 rounded-lg shadow-xl;
+    transition: all 0.3s ease;
+  }
+  
+  .floating-chat.minimized {
+    @apply w-32 h-12;
+  }
+  
+  .floating-chat.collapsed {
+    @apply w-80 h-16;
+  }
+  
+  .floating-chat.normal {
+    @apply w-96 h-96;
+    resize: both;
+    overflow: auto;
+    min-width: 320px;
+    min-height: 200px;
+    max-width: 600px;
+    max-height: 80vh;
+  }
+  
+  /* 拖拽手柄 */
+  .drag-handle {
+    @apply cursor-move select-none;
+  }
+  
+  /* 统计卡片 */
+  .stat-card {
+    @apply bg-base-100 rounded-lg p-4 shadow border border-base-300;
+  }
+  
+  /* 卡片布局 */
+  .card-grid {
+    @apply grid gap-4;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  }
+  
+  /* 表格样式 */
+  .table-container {
+    @apply overflow-x-auto rounded-lg border border-base-300;
+  }
+  
+  /* 表单样式 */
+  .form-group {
+    @apply mb-4;
+  }
+  
+  .form-label {
+    @apply block mb-2 text-sm font-medium;
+  }
+  
+  /* 徽章样式 */
+  .badge-severity-critical {
+    @apply badge badge-error;
+  }
+  
+  .badge-severity-high {
+    @apply badge badge-warning;
+  }
+  
+  .badge-severity-medium {
+    @apply badge badge-info;
+  }
+  
+  .badge-severity-low {
+    @apply badge badge-success;
+  }
+  
+  .badge-severity-info {
+    @apply badge badge-ghost;
+  }
+  
+  /* 状态徽章 */
+  .badge-status-active {
+    @apply badge badge-success;
+  }
+  
+  .badge-status-pending {
+    @apply badge badge-warning;
+  }
+  
+  .badge-status-error {
+    @apply badge badge-error;
+  }
+  
+  .badge-status-completed {
+    @apply badge badge-info;
+  }
+
+  /* 页面容器 */
+  .page-container {
+    @apply container mx-auto p-4;
+  }
+
+  /* 页面标题 */
+  .page-title {
+    @apply text-2xl font-bold mb-6;
+  }
+
+  /* 页面内容 */
+  .page-content {
+    @apply bg-base-100 rounded-lg shadow p-6;
+  }
+
+  /* details 折叠样式（类比 daisyUI Collapse）*/
+  /* 说明：
+     - 全局为 <details> 提供友好的折叠外观，适配明暗主题
+     - 如需按需应用，可为元素添加 .details-collapse 或 .collapse 类
+  */
+  details,
+  details.details-collapse,
+  details.collapse {
+    @apply w-full border border-base-300 rounded-box bg-base-100 text-base-content my-2 overflow-hidden;
+  }
+
+  /* 标题区域（summary） */
+  details > summary,
+  details.details-collapse > summary,
+  details.collapse > summary {
+    @apply cursor-pointer select-none font-medium p-4 outline-none bg-base-100 hover:bg-base-200 transition-colors;
+    list-style: none; /* 隐藏默认 marker（Firefox）*/
+    position: relative;
+    padding-right: 2.25rem; /* 给箭头留空间 */
+  }
+
+  /* 隐藏默认 WebKit marker（三角图标）*/
+  details > summary::-webkit-details-marker,
+  details.details-collapse > summary::-webkit-details-marker,
+  details.collapse > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  /* 自定义箭头（右侧小尖角），闭合时向右，展开时向下 */
+  details > summary::after,
+  details.details-collapse > summary::after,
+  details.collapse > summary::after {
+    content: '';
+    position: absolute;
+    right: 1rem;
+    top: 50%;
+    width: 0.5rem;
+    height: 0.5rem;
+    border: 2px solid currentColor;
+    border-top: 0;
+    border-left: 0;
+    transform: translateY(-50%) rotate(-45deg); /* ▶ */
+    transition: transform 0.2s ease;
+    opacity: 0.8;
+  }
+
+  details[open] > summary,
+  details.details-collapse[open] > summary,
+  details.collapse[open] > summary {
+    @apply border-b border-base-300 bg-base-100;
+  }
+
+  details[open] > summary::after,
+  details.details-collapse[open] > summary::after,
+  details.collapse[open] > summary::after {
+    transform: translateY(-50%) rotate(45deg); /* ▼ */
+  }
+
+  /* 内容区域（除 summary 的其他直接子元素）*/
+  details > *:not(summary),
+  details.details-collapse > *:not(summary),
+  details.collapse > *:not(summary) {
+    @apply p-4 bg-base-100;
+  }
+
+  /* 嵌套 details 的边距微调，避免层叠过密 */
+  details > details,
+  details.details-collapse > details,
+  details.collapse > details {
+    @apply my-2;
+  }
+}
+
+@layer utilities {
+  /* 滚动条样式 */
+  .scrollbar-thin {
+    scrollbar-width: thin;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-track {
+    @apply bg-base-200;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    @apply bg-base-300 rounded-full;
+  }
+  
+  .scrollbar-thin::-webkit-scrollbar-thumb:hover {
+    @apply bg-base-content/20;
+  }
+  
+  /* 动画 */
+  .animate-fade-in {
+    animation: fadeIn 0.3s ease-in-out;
+  }
+  
+  .animate-slide-up {
+    animation: slideUp 0.3s ease-out;
+  }
+  
+  .animate-bounce-in {
+    animation: bounceIn 0.5s ease-out;
+  }
+
+  /* 间距辅助类 */
+  .gap-xs {
+    gap: 0.25rem;
+  }
+
+  .gap-sm {
+    gap: 0.5rem;
+  }
+
+  .gap-md {
+    gap: 1rem;
+  }
+
+  .gap-lg {
+    gap: 1.5rem;
+  }
+
+  /* 文本截断 */
+  .text-truncate {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* 过渡效果 */
+  .transition-all-300 {
+    transition: all 0.3s ease;
+  }
+}
+
+/* 动画定义 */
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes bounceIn {
+  0% {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  50% {
+    transform: scale(1.05);
+  }
+  70% {
+    transform: scale(0.9);
+  }
+  100% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+/* 响应式设计 */
+@media (max-width: 768px) {
+  .floating-chat.normal {
+    @apply w-full h-80;
+    position: fixed !important;
+    top: auto !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    border-radius: 0.5rem 0.5rem 0 0;
+  }
+
+  .card-grid {
+    grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  }
+
+  .page-content {
+    @apply p-4;
+  }
+}

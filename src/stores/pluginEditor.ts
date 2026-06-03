@@ -1,0 +1,313 @@
+import { defineStore } from 'pinia'
+import { ref, watch } from 'vue'
+import type { 
+  PluginRecord, NewPluginMetadata, AiChatMessage, 
+  CodeReference, TestResultReference 
+} from '../components/PluginManagement/types'
+import type { AiValidationReport } from '../components/PluginManagement/aiGeneratedPluginGate'
+import { stringifySeedBindings } from '../components/PluginManagement/seedBindingsSupport'
+
+const normalizePluginInputMode = (value: unknown): NewPluginMetadata['inputMode'] => {
+  const normalized = String(value || '').trim()
+  if (normalized === 'asset' || normalized === 'seed' || normalized === 'hybrid') {
+    return normalized
+  }
+  return ''
+}
+
+// 对话历史持久化接口
+interface ChatHistoryEntry {
+  pluginId: string
+  messages: AiChatMessage[]
+  lastUpdated: number
+}
+
+interface ChatHistoryStorage {
+  entries: ChatHistoryEntry[]
+  maxEntries: number
+}
+
+export const usePluginEditorStore = defineStore('pluginEditor', () => {
+  const STORAGE_KEY = 'sentinel_plugin_chat_history'
+  const ASSISTANT_PROFILE_STORAGE_KEY = 'sentinel_plugin_assistant_profile_id'
+  const MAX_HISTORY_ENTRIES = 50 // 最多保存50个插件的对话历史
+  const MAX_MESSAGES_PER_PLUGIN = 100 // 每个插件最多保存100条消息
+
+  // 窗口状态
+  const isOpen = ref(false)
+  const isMinimized = ref(false)
+  const isFullscreen = ref(false)
+
+  // 编辑数据
+  const editingPlugin = ref<PluginRecord | null>(null)
+  const pluginCode = ref('')
+  const originalCode = ref('')
+  const isEditing = ref(false)
+  const saving = ref(false)
+  const codeError = ref('')
+  const aiValidationReport = ref<AiValidationReport | null>(null)
+
+  // 插件元数据
+  const newPluginMetadata = ref<NewPluginMetadata>({
+    id: '', name: '', version: '1.0.0', author: '',
+    mainCategory: 'traffic', category: 'vulnerability', monitorType: '', inputMode: '',
+    default_severity: 'medium', description: '', tagsString: '', seedBindingsText: '[]'
+  })
+
+  // AI 助手状态
+  const showAiPanel = ref(true)
+  const aiChatMessages = ref<AiChatMessage[]>([])
+  const aiChatStreaming = ref(false)
+  const aiChatStreamingContent = ref('')
+  const aiAssistantProfileId = ref<string | null>(null)
+  const aiAssistantRuntimeProvider = ref<string | null>(null)
+  const aiAssistantRuntimeModel = ref<string | null>(null)
+  const aiAssistantRuntimeModelSource = ref<string | null>(null)
+  const aiAssistantRuntimeProfileId = ref<string | null>(null)
+  const aiAssistantRuntimeTaskProfileId = ref<string | null>(null)
+  const selectedCodeRef = ref<CodeReference | null>(null)
+  const selectedTestResultRef = ref<TestResultReference | null>(null)
+  const pluginTesting = ref(false)
+  const isPreviewMode = ref(false)
+  const previewCode = ref('')
+  
+  // 对话历史管理
+  const chatHistoryMap = ref<Map<string, AiChatMessage[]>>(new Map())
+
+  // 持久化相关方法
+  const loadChatHistoryFromStorage = () => {
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY)
+      if (stored) {
+        const storage: ChatHistoryStorage = JSON.parse(stored)
+        storage.entries.forEach(entry => {
+          chatHistoryMap.value.set(entry.pluginId, entry.messages)
+        })
+      }
+    } catch (error) {
+      console.error('Failed to load chat history from storage:', error)
+    }
+  }
+
+  const loadAssistantProfileSelectionFromStorage = () => {
+    try {
+      const stored = localStorage.getItem(ASSISTANT_PROFILE_STORAGE_KEY)
+      aiAssistantProfileId.value = stored && stored.trim().length > 0 ? stored.trim() : null
+    } catch (error) {
+      console.error('Failed to load plugin assistant profile selection from storage:', error)
+      aiAssistantProfileId.value = null
+    }
+  }
+
+  const saveAssistantProfileSelectionToStorage = () => {
+    try {
+      if (aiAssistantProfileId.value && aiAssistantProfileId.value.trim().length > 0) {
+        localStorage.setItem(ASSISTANT_PROFILE_STORAGE_KEY, aiAssistantProfileId.value.trim())
+      } else {
+        localStorage.removeItem(ASSISTANT_PROFILE_STORAGE_KEY)
+      }
+    } catch (error) {
+      console.error('Failed to save plugin assistant profile selection to storage:', error)
+    }
+  }
+
+  const saveChatHistoryToStorage = () => {
+    try {
+      const entries: ChatHistoryEntry[] = Array.from(chatHistoryMap.value.entries())
+        .map(([pluginId, messages]) => ({
+          pluginId,
+          messages: messages.slice(-MAX_MESSAGES_PER_PLUGIN), // 只保留最近的消息
+          lastUpdated: Date.now()
+        }))
+        .sort((a, b) => b.lastUpdated - a.lastUpdated) // 按时间排序
+        .slice(0, MAX_HISTORY_ENTRIES) // 只保留最近的N个插件
+
+      const storage: ChatHistoryStorage = {
+        entries,
+        maxEntries: MAX_HISTORY_ENTRIES
+      }
+      
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(storage))
+    } catch (error) {
+      console.error('Failed to save chat history to storage:', error)
+    }
+  }
+
+  const loadChatHistory = (pluginId: string) => {
+    const history = chatHistoryMap.value.get(pluginId)
+    if (history) {
+      aiChatMessages.value = [...history]
+    } else {
+      aiChatMessages.value = []
+    }
+  }
+
+  const saveChatHistory = (pluginId: string) => {
+    // 总是保存，即使是空数组（用于清除历史的场景）
+    chatHistoryMap.value.set(pluginId, [...aiChatMessages.value])
+    saveChatHistoryToStorage()
+  }
+
+  const clearChatHistory = (pluginId?: string) => {
+    if (pluginId) {
+      chatHistoryMap.value.delete(pluginId)
+    } else {
+      chatHistoryMap.value.clear()
+    }
+    saveChatHistoryToStorage()
+  }
+
+  const setAiAssistantProfileId = (profileId: string | null) => {
+    const normalized = profileId?.trim() || null
+    aiAssistantProfileId.value = normalized
+    clearAiAssistantRuntimeMeta()
+    saveAssistantProfileSelectionToStorage()
+  }
+
+  const setAiAssistantRuntimeMeta = (payload: {
+    provider?: string | null
+    model?: string | null
+    modelSource?: string | null
+    profileId?: string | null
+    taskProfileId?: string | null
+  }) => {
+    aiAssistantRuntimeProvider.value = payload.provider?.trim() || null
+    aiAssistantRuntimeModel.value = payload.model?.trim() || null
+    aiAssistantRuntimeModelSource.value = payload.modelSource?.trim() || null
+    aiAssistantRuntimeProfileId.value = payload.profileId?.trim() || null
+    aiAssistantRuntimeTaskProfileId.value = payload.taskProfileId?.trim() || null
+  }
+
+  const clearAiAssistantRuntimeMeta = () => {
+    aiAssistantRuntimeProvider.value = null
+    aiAssistantRuntimeModel.value = null
+    aiAssistantRuntimeModelSource.value = null
+    aiAssistantRuntimeProfileId.value = null
+    aiAssistantRuntimeTaskProfileId.value = null
+  }
+
+  // 操作
+  const openEditor = (plugin: PluginRecord | null = null, code: string = '', metadata?: NewPluginMetadata) => {
+    isOpen.value = true
+    isMinimized.value = false
+    editingPlugin.value = plugin
+    pluginCode.value = code
+    originalCode.value = code
+    codeError.value = ''
+    aiValidationReport.value = null
+    clearAiAssistantRuntimeMeta()
+    
+    // 如果是编辑现有插件，默认处于编辑状态
+    isEditing.value = plugin !== null
+    
+    if (metadata) {
+      newPluginMetadata.value = metadata
+    } else if (plugin) {
+      newPluginMetadata.value = {
+        id: plugin.metadata.id,
+        name: plugin.metadata.name,
+        version: plugin.metadata.version,
+        author: plugin.metadata.author || '',
+        mainCategory: plugin.metadata.main_category,
+        category: plugin.metadata.category,
+        monitorType: plugin.metadata.monitor_type || '',
+        inputMode: normalizePluginInputMode(plugin.metadata.input_mode),
+        default_severity: plugin.metadata.default_severity,
+        description: plugin.metadata.description || '',
+        tagsString: plugin.metadata.tags.join(', '),
+        seedBindingsText: stringifySeedBindings(plugin.metadata.seed_bindings || []),
+      }
+      // 加载该插件的对话历史
+      loadChatHistory(plugin.metadata.id)
+    } else {
+      // 重置为新插件
+      newPluginMetadata.value = {
+        id: '', name: '', version: '1.0.0', author: '',
+        mainCategory: 'agent', category: 'vulnerability', monitorType: '', inputMode: '',
+        default_severity: 'medium', description: '', tagsString: '', seedBindingsText: '[]'
+      }
+      aiChatMessages.value = []
+    }
+  }
+
+  const closeEditor = () => {
+    // 保存当前插件的对话历史
+    if (editingPlugin.value && aiChatMessages.value.length > 0) {
+      saveChatHistory(editingPlugin.value.metadata.id)
+    }
+    
+    isOpen.value = false
+    isMinimized.value = false
+    editingPlugin.value = null
+    pluginCode.value = ''
+    originalCode.value = ''
+    isEditing.value = true
+    saving.value = false
+    codeError.value = ''
+    aiValidationReport.value = null
+    aiChatMessages.value = []
+    clearAiAssistantRuntimeMeta()
+    selectedCodeRef.value = null
+    selectedTestResultRef.value = null
+    isPreviewMode.value = false
+    previewCode.value = ''
+  }
+
+  const minimizeEditor = () => {
+    isMinimized.value = true
+    // Keep isOpen true so the editor state persists
+  }
+
+  const restoreEditor = () => {
+    isMinimized.value = false
+    isOpen.value = true
+  }
+
+  const toggleFullscreen = () => {
+    isFullscreen.value = !isFullscreen.value
+  }
+
+  // 初始化时加载历史
+  loadChatHistoryFromStorage()
+  loadAssistantProfileSelectionFromStorage()
+
+  // 监听 aiChatMessages 变化，自动保存
+  // 使用防抖避免频繁保存
+  let saveTimeout: ReturnType<typeof setTimeout> | null = null
+  watch(aiChatMessages, () => {
+    if (editingPlugin.value) {
+      // 清除之前的定时器
+      if (saveTimeout) {
+        clearTimeout(saveTimeout)
+      }
+      // 延迟500ms保存，避免频繁写入
+      saveTimeout = setTimeout(() => {
+        if (editingPlugin.value) {
+          saveChatHistory(editingPlugin.value.metadata.id)
+        }
+        saveTimeout = null
+      }, 500)
+    }
+  }, { deep: true })
+
+  return {
+    isOpen, isMinimized, isFullscreen,
+    editingPlugin, pluginCode, originalCode, isEditing, saving, codeError, aiValidationReport,
+    newPluginMetadata,
+    showAiPanel, aiChatMessages, aiChatStreaming, aiChatStreamingContent,
+    aiAssistantProfileId,
+    aiAssistantRuntimeProvider,
+    aiAssistantRuntimeModel,
+    aiAssistantRuntimeModelSource,
+    aiAssistantRuntimeProfileId,
+    aiAssistantRuntimeTaskProfileId,
+    selectedCodeRef, selectedTestResultRef, pluginTesting,
+    isPreviewMode, previewCode,
+    openEditor, closeEditor, minimizeEditor, restoreEditor, toggleFullscreen,
+    setAiAssistantProfileId,
+    setAiAssistantRuntimeMeta,
+    clearAiAssistantRuntimeMeta,
+    // 对话历史管理方法
+    loadChatHistory, saveChatHistory, clearChatHistory
+  }
+})

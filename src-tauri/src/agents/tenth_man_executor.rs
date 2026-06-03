@@ -1,0 +1,474 @@
+//! Tenth Man Executor - Runtime logic for Tenth Man tool
+//!
+//! This module contains the actual LLM execution logic for the Tenth Man tool.
+//! It's separated from the tool definition to avoid dependency issues.
+
+use once_cell::sync::Lazy;
+use sentinel_llm::{LlmClient, LlmConfig};
+use sentinel_tools::buildin_tools::tenth_man_tool::{
+    ReviewMode, TenthManToolArgs, TenthManToolError, TenthManToolOutput,
+};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tauri::Manager;
+use tokio::sync::RwLock;
+
+/// Global LLM config storage for Tenth Man reviews (set per execution)
+static TENTH_MAN_CONFIGS: Lazy<Arc<RwLock<HashMap<String, LlmConfig>>>> =
+    Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
+
+/// Global task context storage (for providing context to reviews)
+static TASK_CONTEXTS: Lazy<Arc<RwLock<HashMap<String, TenthManTaskContext>>>> =
+    Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
+
+/// Global AppHandle storage (for accessing database and sliding window)
+static APP_HANDLE: once_cell::sync::OnceCell<tauri::AppHandle> = once_cell::sync::OnceCell::new();
+const FULL_HISTORY_MAX_MESSAGES: usize = 64;
+const FULL_HISTORY_MAX_CHARS: usize = 40_000;
+const FULL_HISTORY_GLOBAL_SUMMARY_MAX_CHARS: usize = 8_000;
+const FULL_HISTORY_PER_MESSAGE_MAX_CHARS: usize = 1_500;
+const FULL_HISTORY_TOOL_SECTION_MAX_CHARS: usize = 1_200;
+const FULL_HISTORY_REASONING_MAX_CHARS: usize = 900;
+
+#[derive(Debug, Clone)]
+struct TenthManTaskContext {
+    task: String,
+    conversation_id: String,
+}
+
+/// System prompt for quick review
+const TENTH_MAN_QUICK_REVIEW_PROMPT: &str = r#"You are the "Tenth Man" performing a rapid risk assessment.
+
+Quickly scan the content and identify ONLY the most severe risk (if any).
+If there's no significant risk, respond with "无严重风险".
+If there IS a risk, provide a 1-2 sentence warning.
+
+Be extremely concise. Focus on HIGH-IMPACT risks only.
+
+**IMPORTANT**: You must answer in Chinese (Simplified Chinese).
+"#;
+
+/// System prompt for full review
+const TENTH_MAN_FULL_REVIEW_PROMPT: &str = r#"You are the "Tenth Man".
+Your role is to act as a fail-safe mechanism against Groupthink and confirmation bias.
+
+The agent has analyzed a situation and reached a conclusion or plan.
+Your absolute DUTY is to challenge this conclusion. You must assume the conclusion is WRONG, DANGEROUS, or INCOMPLETE.
+
+### Your Objectives:
+1. **Identify False Assumptions**: What underlying premises are taken for granted but might be false?
+2. **Find the "Black Swan"**: What low-probability but high-impact scenario has been ignored?
+3. **Attack the Logic**: Where are the leaps in reasoning?
+4. **Security Audit**: If this is a security operation, how would a sophisticated attacker bypass this plan?
+
+### Response Format:
+You must be direct, critical, and concise. Do not be polite.
+If you find no significant flaws, you must still present the "Least Likely but Most Dangerous" failure mode.
+
+Structure your response as:
+**[Tenth Man Intervention]**
+**1. Critical Flaw**: (The biggest weakness)
+**2. Hidden Risk**: (The overlooked scenario)
+**3. Counter-Argument**: (Why the current plan might fail)
+
+**IMPORTANT**: You must answer in Chinese (Simplified Chinese).
+"#;
+
+fn truncate_utf8_at_boundary(input: &str, max_bytes: usize) -> String {
+    if input.len() <= max_bytes {
+        return input.to_string();
+    }
+    let mut safe_len = max_bytes;
+    while safe_len > 0 && !input.is_char_boundary(safe_len) {
+        safe_len -= 1;
+    }
+    input[..safe_len].to_string()
+}
+
+fn append_with_budget(target: &mut String, chunk: &str, remaining: &mut usize) -> bool {
+    if *remaining == 0 {
+        return false;
+    }
+    if chunk.len() <= *remaining {
+        target.push_str(chunk);
+        *remaining -= chunk.len();
+        return true;
+    }
+    let cut = truncate_utf8_at_boundary(chunk, *remaining);
+    if !cut.is_empty() {
+        target.push_str(&cut);
+        *remaining = (*remaining).saturating_sub(cut.len());
+    }
+    false
+}
+
+/// Set LLM config for a specific execution
+pub async fn set_tenth_man_config(execution_id: String, config: LlmConfig) {
+    let mut configs = TENTH_MAN_CONFIGS.write().await;
+    configs.insert(execution_id, config);
+}
+
+/// Set task context for a specific execution
+pub async fn set_task_context(execution_id: String, task: String, conversation_id: String) {
+    let mut contexts = TASK_CONTEXTS.write().await;
+    contexts.insert(
+        execution_id,
+        TenthManTaskContext {
+            task,
+            conversation_id,
+        },
+    );
+}
+
+/// Set AppHandle for accessing database
+pub fn set_app_handle(handle: tauri::AppHandle) {
+    let _ = APP_HANDLE.set(handle);
+}
+
+/// Clear config and context for an execution (cleanup)
+pub async fn clear_tenth_man_execution(execution_id: &str) {
+    let mut configs = TENTH_MAN_CONFIGS.write().await;
+    configs.remove(execution_id);
+    let mut contexts = TASK_CONTEXTS.write().await;
+    contexts.remove(execution_id);
+}
+
+/// Build history context based on review mode
+async fn build_history_context(
+    conversation_id: &str,
+    review_mode: &ReviewMode,
+) -> Result<String, TenthManToolError> {
+    let app_handle = APP_HANDLE
+        .get()
+        .ok_or_else(|| TenthManToolError::InternalError("AppHandle not initialized".to_string()))?;
+
+    match review_mode {
+        ReviewMode::FullHistory => {
+            // Use SlidingWindow to get complete context with smart summarization
+            use crate::agents::sliding_window::SlidingWindowManager;
+
+            let sw = SlidingWindowManager::new(app_handle, conversation_id, None)
+                .await
+                .map_err(|e| {
+                    TenthManToolError::InternalError(format!(
+                        "Failed to create SlidingWindow: {}",
+                        e
+                    ))
+                })?;
+
+            // Build context (summary context plus recent messages)
+            let context_messages = sw.build_context("");
+            let summary_context = sw.render_summary_context();
+
+            let mut history = String::new();
+            let mut remaining = FULL_HISTORY_MAX_CHARS;
+            let mut truncated = false;
+
+            if !summary_context.trim().is_empty() {
+                let global = truncate_utf8_at_boundary(
+                    &summary_context,
+                    FULL_HISTORY_GLOBAL_SUMMARY_MAX_CHARS,
+                );
+                if !append_with_budget(
+                    &mut history,
+                    &format!("=== Global Context Summary ===\n{}\n\n", global),
+                    &mut remaining,
+                ) {
+                    truncated = true;
+                }
+            }
+
+            // Format conversation history
+            if !append_with_budget(
+                &mut history,
+                "=== Conversation History ===\n",
+                &mut remaining,
+            ) {
+                truncated = true;
+            }
+            for (idx, msg) in context_messages
+                .iter()
+                .enumerate()
+                .skip(1)
+                .take(FULL_HISTORY_MAX_MESSAGES)
+            {
+                if remaining < 128 {
+                    truncated = true;
+                    break;
+                }
+                let content =
+                    truncate_utf8_at_boundary(&msg.content, FULL_HISTORY_PER_MESSAGE_MAX_CHARS);
+                if !append_with_budget(
+                    &mut history,
+                    &format!("\n[Message #{}] {}:\n", idx, msg.role.to_uppercase()),
+                    &mut remaining,
+                ) {
+                    truncated = true;
+                    break;
+                }
+                if !append_with_budget(&mut history, &content, &mut remaining) {
+                    truncated = true;
+                    break;
+                }
+
+                if let Some(ref tool_calls) = msg.tool_calls {
+                    let tool_calls =
+                        truncate_utf8_at_boundary(tool_calls, FULL_HISTORY_TOOL_SECTION_MAX_CHARS);
+                    if !append_with_budget(
+                        &mut history,
+                        &format!("\n[Tool Calls]: {}", tool_calls),
+                        &mut remaining,
+                    ) {
+                        truncated = true;
+                        break;
+                    }
+                }
+
+                if let Some(ref reasoning) = msg.reasoning_content {
+                    let reasoning_str: &str = reasoning;
+                    if !reasoning_str.trim().is_empty() {
+                        let reasoning =
+                            truncate_utf8_at_boundary(reasoning, FULL_HISTORY_REASONING_MAX_CHARS);
+                        if !append_with_budget(
+                            &mut history,
+                            &format!("\n[Reasoning]: {}", reasoning),
+                            &mut remaining,
+                        ) {
+                            truncated = true;
+                            break;
+                        }
+                    }
+                }
+
+                if !append_with_budget(&mut history, "\n", &mut remaining) {
+                    truncated = true;
+                    break;
+                }
+            }
+
+            if context_messages.len().saturating_sub(1) > FULL_HISTORY_MAX_MESSAGES {
+                truncated = true;
+            }
+            if truncated {
+                let _ = append_with_budget(
+                    &mut history,
+                    "\n...[history truncated for review budget]",
+                    &mut remaining,
+                );
+            }
+
+            Ok(history)
+        }
+
+        ReviewMode::RecentMessages { count } => {
+            // Get recent N messages from database
+            use sentinel_db::Database;
+
+            let db = app_handle.state::<Arc<sentinel_db::DatabaseService>>();
+            let messages: Vec<sentinel_core::models::database::AiMessage> = db
+                .get_ai_messages_by_conversation(conversation_id)
+                .await
+                .map_err(|e| {
+                    TenthManToolError::InternalError(format!("Failed to get messages: {}", e))
+                })?;
+
+            let recent = messages.iter().rev().take(*count).rev().collect::<Vec<_>>();
+
+            let mut history = String::new();
+            history.push_str(&format!("=== Recent {} Messages ===\n", count));
+
+            for (idx, msg) in recent.iter().enumerate() {
+                history.push_str(&format!(
+                    "\n[Message #{}] {} at {}:\n",
+                    idx + 1,
+                    msg.role.to_uppercase(),
+                    msg.timestamp.format("%Y-%m-%d %H:%M:%S")
+                ));
+                history.push_str(&msg.content);
+
+                if let Some(ref tool_calls) = msg.tool_calls {
+                    history.push_str(&format!("\n[Tool Calls]: {}", tool_calls));
+                }
+
+                if let Some(ref reasoning) = msg.reasoning_content {
+                    let reasoning_str: &str = reasoning;
+                    if !reasoning_str.trim().is_empty() {
+                        history.push_str(&format!("\n[Reasoning]: {}", reasoning));
+                    }
+                }
+
+                history.push_str("\n");
+            }
+
+            Ok(history)
+        }
+
+        ReviewMode::SpecificContent { content } => {
+            // Backward compatible: directly return specified content
+            Ok(content.clone())
+        }
+    }
+}
+
+/// Assess risk level from critique content
+fn assess_risk_level(critique: &str) -> String {
+    let critique_lower = critique.to_lowercase();
+
+    if critique.contains("无严重风险") || critique.contains("no significant risk") {
+        return "none".to_string();
+    }
+
+    // Critical risk indicators
+    if critique_lower.contains("critical")
+        || critique_lower.contains("严重")
+        || critique_lower.contains("致命")
+        || critique_lower.contains("危险")
+        || critique_lower.contains("disaster")
+    {
+        return "critical".to_string();
+    }
+
+    // High risk indicators
+    if critique_lower.contains("high risk")
+        || critique_lower.contains("高风险")
+        || critique_lower.contains("重大缺陷")
+        || critique_lower.contains("major flaw")
+    {
+        return "high".to_string();
+    }
+
+    // Medium risk indicators
+    if critique_lower.contains("medium")
+        || critique_lower.contains("中等")
+        || critique_lower.contains("potential issue")
+    {
+        return "medium".to_string();
+    }
+
+    // Default to low risk if critique exists
+    "low".to_string()
+}
+
+/// Execute Tenth Man review
+pub async fn execute_tenth_man_review(
+    args: TenthManToolArgs,
+) -> Result<TenthManToolOutput, TenthManToolError> {
+    tracing::info!(
+        "Executing Tenth Man review - execution_id: {}, review_type: {}, review_mode: {:?}",
+        args.execution_id,
+        args.review_type,
+        args.review_mode
+    );
+
+    // Get LLM config for this execution
+    let config = {
+        let configs = TENTH_MAN_CONFIGS.read().await;
+        configs.get(&args.execution_id).cloned()
+    };
+
+    let Some(config) = config else {
+        return Err(TenthManToolError::ConfigNotFound(args.execution_id.clone()));
+    };
+
+    // Get task context
+    let task_context = {
+        let contexts = TASK_CONTEXTS.read().await;
+        contexts
+            .get(&args.execution_id)
+            .cloned()
+            .unwrap_or_else(|| TenthManTaskContext {
+                task: "Unknown task".to_string(),
+                conversation_id: args.execution_id.clone(),
+            })
+    };
+
+    // Build history context based on review mode
+    let history_context =
+        build_history_context(&task_context.conversation_id, &args.review_mode).await?;
+
+    // Build review prompt
+    let focus_area = args
+        .focus_area
+        .as_deref()
+        .unwrap_or("overall approach and execution process");
+
+    let normalized_review_type = if matches!(args.review_mode, ReviewMode::FullHistory)
+        && args.review_type.eq_ignore_ascii_case("quick")
+    {
+        tracing::warn!(
+            "Tenth Man review_type=quick with full_history is too lossy; promoting to full (execution_id={})",
+            args.execution_id
+        );
+        "full".to_string()
+    } else if args.review_type.eq_ignore_ascii_case("quick") {
+        "quick".to_string()
+    } else {
+        "full".to_string()
+    };
+
+    let review_prompt = match normalized_review_type.as_str() {
+        "quick" => {
+            format!(
+                "### Original Task:\n{}\n\n### Focus Area:\n{}\n\n### History Context:\n{}\n\n---\n\nPerform quick risk assessment:",
+                task_context.task, focus_area, history_context
+            )
+        }
+        "full" | _ => {
+            format!(
+                "### Original Task:\n{}\n\n### Focus Area:\n{}\n\n### Complete History Context:\n{}\n\n---\n\nPerform your Tenth Man review now. Challenge the current conclusions and execution process.",
+                task_context.task, focus_area, history_context
+            )
+        }
+    };
+
+    let system_prompt = match normalized_review_type.as_str() {
+        "quick" => TENTH_MAN_QUICK_REVIEW_PROMPT,
+        "full" | _ => TENTH_MAN_FULL_REVIEW_PROMPT,
+    };
+
+    // Perform review
+    let client = LlmClient::new(config);
+    let critique = client
+        .completion(Some(system_prompt), &review_prompt)
+        .await
+        .map_err(|e| TenthManToolError::ReviewFailed(e.to_string()))?;
+
+    // Assess risk level
+    let risk_level = assess_risk_level(&critique);
+
+    // Check if no risk found
+    let success = !critique.trim().is_empty();
+    let message = if risk_level == "none" {
+        "No significant risks identified".to_string()
+    } else {
+        format!("Review completed - Risk level: {}", risk_level)
+    };
+
+    tracing::info!(
+        "Tenth Man review completed - execution_id: {}, risk_level: {}, history_length: {}, critique_length: {}",
+        args.execution_id,
+        risk_level,
+        history_context.len(),
+        critique.len()
+    );
+
+    Ok(TenthManToolOutput {
+        success,
+        critique: Some(critique),
+        risk_level,
+        message,
+    })
+}
+
+/// Initialize Tenth Man executor
+pub fn init_tenth_man_executor() {
+    use sentinel_tools::buildin_tools::tenth_man_tool::set_tenth_man_executor;
+
+    let executor = std::sync::Arc::new(|args: TenthManToolArgs| {
+        Box::pin(execute_tenth_man_review(args))
+            as std::pin::Pin<Box<dyn std::future::Future<Output = _> + Send>>
+    });
+
+    set_tenth_man_executor(executor);
+    tracing::info!("Tenth Man executor initialized");
+}

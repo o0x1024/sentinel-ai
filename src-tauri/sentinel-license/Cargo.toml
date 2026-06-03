@@ -1,0 +1,74 @@
+[package]
+name = "sentinel-license"
+version = "0.1.0"
+edition = "2021"
+description = "License management for Sentinel AI"
+
+[[bin]]
+name = "license_generator"
+path = "src/bin/license_generator.rs"
+
+[[bin]]
+name = "entitlement_server"
+path = "src/bin/entitlement_server.rs"
+
+[dependencies]
+# Ed25519 signature
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+rand = { workspace = true }
+
+# Hash
+sha2 = "0.10"
+blake3 = "1.5"
+
+# Encoding
+base64 = "0.22"
+hex = "0.4"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Async HTTP server
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
+
+# Directory paths
+dirs = "5.0"
+
+# System info for machine id
+sysinfo = "0.32"
+
+# MAC address
+mac_address = "1.1"
+
+# Lazy initialization
+once_cell = "1.19"
+
+# Platform-specific dependencies
+[target.'cfg(target_os = "macos")'.dependencies]
+core-foundation = "0.10"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+winreg = "0.55"
+windows = { version = "0.58", features = ["Win32_System_Diagnostics_Debug", "Win32_Foundation", "Win32_System_Threading"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# Linux uses /etc/machine-id, no extra deps needed
+
+[features]
+default = []
+# Skip license check in debug builds
+skip-in-debug = []
+# Enable license enforcement in release builds.
+# Off by default — add this feature to re-enable server-activation checks.
+enforce-license = []

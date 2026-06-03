@@ -1,0 +1,53 @@
+export default {
+  title: 'Smart Scan Sessions',
+  description: 'Manage and monitor smart scan sessions',
+  newSession: 'New Session',
+  allSessions: 'All Sessions',
+  activeSessions: 'Active Sessions',
+  completedSessions: 'Completed Sessions',
+  sessionDetails: 'Session Details',
+  sessionName: 'Session Name',
+  target: 'Target',
+  sessionType: 'Session Type',
+  status: 'Status',
+  currentStage: 'Current Stage',
+  progress: 'Progress',
+  assetsFound: 'Assets Found',
+  vulnerabilitiesFound: 'Vulnerabilities Found',
+  startTime: 'Start Time',
+  endTime: 'End Time',
+  duration: 'Duration',
+  actions: 'Actions',
+  start: 'Start',
+  pause: 'Pause',
+  stop: 'Stop',
+  resume: 'Resume',
+  delete: 'Delete',
+  viewDetails: 'View Details',
+  exportReport: 'Export Report',
+  clone: 'Clone',
+  filters: {
+    all: 'All',
+    active: 'Active',
+    paused: 'Paused',
+    completed: 'Completed',
+    failed: 'Failed'
+  },
+  statusLabels: {
+    pending: 'Pending',
+    running: 'Running',
+    paused: 'Paused',
+    completed: 'Completed',
+    failed: 'Failed',
+    stopped: 'Stopped'
+  },
+  types: {
+    comprehensive: 'Comprehensive Scan',
+    targeted: 'Targeted Scan',
+    quick: 'Quick Scan',
+    deep: 'Deep Scan',
+    custom: 'Custom Scan',
+    subdomain: 'Subdomain Scan',
+    port: 'Port Scan'
+  }
+}

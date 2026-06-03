@@ -1,0 +1,1212 @@
+<template>
+  <!-- Code Editor Dialog -->
+  <AppDialog ref="codeEditorDialogRef" class="modal" :class="{ 'fullscreen-mode-active': isFullscreenEditor }" @cancel="handleDialogCancel">
+    <div
+      class="modal-box plugin-code-editor-modal-box w-11/12 max-w-5xl max-h-[90vh] overflow-hidden flex flex-col"
+      :class="{ 'invisible': isFullscreenEditor }"
+    >
+      <div class="plugin-code-editor-scroll min-h-0 flex-1 overflow-y-auto pr-1 pb-4">
+        <div class="flex justify-between items-start mb-4 pb-2">
+        <div class="flex items-center gap-2">
+          <h3 class="font-bold text-lg">
+            {{ editingPlugin ? $t('plugins.codeEditor', '插件代码编辑器') : $t('plugins.newPlugin', '新增插件') }}
+            <span v-if="editingPlugin" class="text-sm font-normal text-gray-500 ml-2">
+              {{ editingPlugin.metadata.name }} ({{ editingPlugin.metadata.id }})
+            </span>
+          </h3>
+          <div class="relative">
+            <button 
+              class="btn btn-xs btn-ghost btn-circle" 
+              :title="$t('plugins.shortcuts', '快捷键')"
+              @click="toggleShortcutsMenu"
+            >
+              <i class="fas fa-keyboard"></i>
+            </button>
+            <transition name="fade-scale">
+              <div 
+                v-if="showShortcutsMenu"
+                v-click-outside="closeShortcutsMenu"
+                class="absolute top-full right-0 mt-2 p-3 shadow-xl bg-base-200 rounded-lg w-80 text-xs z-[1000] border border-base-300"
+              >
+                <div class="flex items-center gap-2 mb-3 pb-2 border-b border-base-300">
+                  <i class="fas fa-keyboard text-primary"></i>
+                  <span class="font-semibold text-sm">{{ $t('plugins.keyboardShortcuts', '键盘快捷键') }}</span>
+                </div>
+                <div class="space-y-1">
+                  <div class="flex justify-between items-center px-2 py-2 hover:bg-base-300/50 rounded transition-colors">
+                    <span class="text-xs">{{ $t('plugins.toggleAiPanel', '切换AI面板') }}</span>
+                    <kbd class="kbd kbd-xs">Ctrl/Cmd + K</kbd>
+                  </div>
+                  <div class="flex justify-between items-center px-2 py-2 hover:bg-base-300/50 rounded transition-colors">
+                    <span class="text-xs">{{ $t('plugins.savePlugin', '保存插件') }}</span>
+                    <kbd class="kbd kbd-xs">Ctrl/Cmd + S</kbd>
+                  </div>
+                  <div class="flex justify-between items-center px-2 py-2 hover:bg-base-300/50 rounded transition-colors">
+                    <span class="text-xs">{{ $t('plugins.formatCode', '格式化代码') }}</span>
+                    <kbd class="kbd kbd-xs">Ctrl/Cmd + Shift + F</kbd>
+                  </div>
+                  <div class="flex justify-between items-center px-2 py-2 hover:bg-base-300/50 rounded transition-colors">
+                    <span class="text-xs">{{ $t('plugins.copyCode', '复制代码') }}</span>
+                    <kbd class="kbd kbd-xs">Ctrl/Cmd + Shift + C</kbd>
+                  </div>
+                  <div class="flex justify-between items-center px-2 py-2 hover:bg-base-300/50 rounded transition-colors">
+                    <span class="text-xs">{{ $t('plugins.toggleFullscreen', '切换全屏') }}</span>
+                    <kbd class="kbd kbd-xs">F11</kbd>
+                  </div>
+                  <div class="flex justify-between items-center px-2 py-2 hover:bg-base-300/50 rounded transition-colors">
+                    <span class="text-xs">{{ $t('plugins.enableEdit', '启用编辑') }}</span>
+                    <kbd class="kbd kbd-xs">Ctrl/Cmd + E</kbd>
+                  </div>
+                  <div class="flex justify-between items-center px-2 py-2 hover:bg-base-300/50 rounded transition-colors">
+                    <span class="text-xs">{{ $t('plugins.exitFullscreen', '退出全屏') }}</span>
+                    <kbd class="kbd kbd-xs">ESC</kbd>
+                  </div>
+                </div>
+              </div>
+            </transition>
+          </div>
+        </div>
+        <button @click="closeDialog" class="btn btn-sm btn-circle btn-ghost">✕</button>
+      </div>
+
+      <!-- Plugin Metadata Form -->
+      <div class="grid grid-cols-2 gap-4 mb-4">
+        <div class="form-control">
+          <label class="label">
+            <span class="label-text">{{ $t('plugins.pluginId', '插件ID') }} <span class="text-error">*</span></span>
+          </label>
+          <input :value="newPluginMetadata.id" @input="updateMetadata('id', ($event.target as HTMLInputElement).value)"
+            type="text" :placeholder="$t('plugins.pluginIdPlaceholder', '例如: sql_injection_scanner')"
+            class="input input-bordered input-sm" :disabled="!!editingPlugin" />
+        </div>
+
+        <div class="form-control">
+          <label class="label">
+            <span class="label-text">{{ $t('plugins.pluginName', '插件名称') }} <span class="text-error">*</span></span>
+          </label>
+          <input :value="newPluginMetadata.name" @input="updateMetadata('name', ($event.target as HTMLInputElement).value)"
+            type="text" :placeholder="$t('plugins.pluginNamePlaceholder', '例如: SQL注入扫描器')"
+            class="input input-bordered input-sm" :disabled="editingPlugin && !isEditing" />
+        </div>
+
+        <div class="form-control">
+          <label class="label"><span class="label-text">{{ $t('plugins.version', '版本') }}</span></label>
+          <input :value="newPluginMetadata.version" @input="updateMetadata('version', ($event.target as HTMLInputElement).value)"
+            type="text" placeholder="1.0.0" class="input input-bordered input-sm" :disabled="editingPlugin && !isEditing" />
+        </div>
+
+        <div class="form-control">
+          <label class="label"><span class="label-text">{{ $t('plugins.author', '作者') }}</span></label>
+          <input :value="newPluginMetadata.author" @input="updateMetadata('author', ($event.target as HTMLInputElement).value)"
+            type="text" :placeholder="$t('plugins.authorPlaceholder', '作者名称')"
+            class="input input-bordered input-sm" :disabled="editingPlugin && !isEditing" />
+        </div>
+
+        <div class="form-control">
+          <label class="label">
+            <span class="label-text">{{ $t('plugins.mainCategory', '主分类') }} <span class="text-error">*</span></span>
+          </label>
+          <select :value="newPluginMetadata.mainCategory" @change="updateMetadata('mainCategory', ($event.target as HTMLSelectElement).value)"
+            class="select select-bordered select-sm" :disabled="editingPlugin && !isEditing">
+            <option v-for="cat in localizedMainCategories" :key="cat.value" :value="cat.value">{{ cat.label }}</option>
+          </select>
+        </div>
+
+        <div class="form-control">
+          <label class="label">
+            <span class="label-text">{{ $t('plugins.subCategory', '子分类') }} <span class="text-error">*</span></span>
+          </label>
+          <select :value="newPluginMetadata.category" @change="updateMetadata('category', ($event.target as HTMLSelectElement).value)"
+            class="select select-bordered select-sm" :disabled="editingPlugin && !isEditing">
+            <option v-for="cat in subCategories" :key="cat.value" :value="cat.value">{{ cat.label }}</option>
+          </select>
+        </div>
+
+        <div v-if="newPluginMetadata.mainCategory === 'agent' || newPluginMetadata.mainCategory === 'bounty'" class="form-control">
+          <label class="label">
+            <span class="label-text">{{ $t('plugins.monitorType', '监控调度分类') }} <span class="text-error">*</span></span>
+          </label>
+          <select :value="newPluginMetadata.monitorType" @change="updateMetadata('monitorType', ($event.target as HTMLSelectElement).value)"
+            class="select select-bordered select-sm" :disabled="editingPlugin && !isEditing">
+            <option value="" disabled>{{ $t('plugins.selectMonitorType', '请选择监控调度分类') }}</option>
+            <option v-for="option in monitorTypeOptions" :key="option.value" :value="option.value">{{ option.label }}</option>
+          </select>
+          <label class="label">
+            <span class="label-text-alt text-warning">{{ $t('plugins.monitorTypeRequired', 'Agent/Bounty 插件必须显式声明监控调度分类') }}</span>
+          </label>
+        </div>
+
+        <div v-if="newPluginMetadata.mainCategory === 'agent' || newPluginMetadata.mainCategory === 'bounty'" class="form-control">
+          <label class="label">
+            <span class="label-text">{{ $t('plugins.inputMode', '输入模式') }}</span>
+          </label>
+          <select
+            :value="newPluginMetadata.inputMode"
+            @change="updateMetadata('inputMode', ($event.target as HTMLSelectElement).value)"
+            class="select select-bordered select-sm"
+            :disabled="editingPlugin && !isEditing"
+          >
+            <option value="">{{ $t('plugins.inputModeUnset', '未设置') }}</option>
+            <option v-for="option in inputModeOptions" :key="option.value" :value="option.value">
+              {{ option.label }}
+            </option>
+          </select>
+          <label class="label">
+            <span class="label-text-alt text-base-content/60">
+              {{ $t('plugins.inputModeHelp', 'asset 使用目标资产，seed 使用发现种子，hybrid 同时使用两者') }}
+            </span>
+          </label>
+        </div>
+
+        <div
+          v-if="newPluginMetadata.mainCategory === 'agent' || newPluginMetadata.mainCategory === 'bounty'"
+          class="form-control col-span-2"
+        >
+          <SeedBindingsEditor
+            :model-value="newPluginMetadata.seedBindingsText"
+            :json-error="seedBindingsError"
+            :input-key-options="seedBindingInputKeyOptions"
+            :input-key-loading="seedBindingInputKeyOptionsLoading"
+            :input-key-error="seedBindingInputKeyOptionsError"
+            :disabled="Boolean(editingPlugin && !isEditing)"
+            @update:model-value="updateMetadata('seedBindingsText', $event)"
+          />
+        </div>
+
+        <div class="form-control">
+          <label class="label"><span class="label-text">{{ $t('plugins.defaultSeverity', '默认严重程度') }}</span></label>
+          <select :value="newPluginMetadata.default_severity" @change="updateMetadata('default_severity', ($event.target as HTMLSelectElement).value)"
+            class="select select-bordered select-sm" :disabled="editingPlugin && !isEditing">
+            <option value="info">{{ $t('common.info', '信息') }}</option>
+            <option value="low">{{ $t('common.low', '低危') }}</option>
+            <option value="medium">{{ $t('common.medium', '中危') }}</option>
+            <option value="high">{{ $t('common.high', '高危') }}</option>
+            <option value="critical">{{ $t('common.critical', '严重') }}</option>
+          </select>
+        </div>
+
+        <div class="form-control col-span-2">
+          <label class="label"><span class="label-text">{{ $t('common.description', '描述') }}</span></label>
+          <input :value="newPluginMetadata.description" @input="updateMetadata('description', ($event.target as HTMLInputElement).value)"
+            type="text" :placeholder="$t('plugins.descriptionPlaceholder', '插件功能描述')"
+            class="input input-bordered input-sm" :disabled="editingPlugin && !isEditing" />
+        </div>
+
+        <div class="form-control col-span-2">
+          <label class="label">
+            <span class="label-text">{{ $t('plugins.tags', '标签') }} ({{ $t('plugins.commaSeparated', '逗号分隔') }})</span>
+          </label>
+          <input :value="newPluginMetadata.tagsString" @input="updateMetadata('tagsString', ($event.target as HTMLInputElement).value)"
+            type="text" :placeholder="$t('plugins.tagsPlaceholder', '例如: security, scanner, sql')"
+            class="input input-bordered input-sm" :disabled="editingPlugin && !isEditing" />
+        </div>
+      </div>
+
+      <!-- Code Editor -->
+      <div class="form-control w-full">
+        <div class="flex justify-between items-center mb-2">
+          <label class="label"><span class="label-text">{{ $t('plugins.pluginCode', '插件代码') }}</span></label>
+          <div class="flex gap-2">
+            <button v-if="!editingPlugin" class="btn btn-xs btn-outline" @click="$emit('insertTemplate')">
+              <i class="fas fa-file-code mr-1"></i>{{ $t('plugins.insertTemplate', '插入模板') }}
+            </button>
+            <button class="btn btn-xs btn-outline" @click="$emit('formatCode')">
+              <i class="fas fa-indent mr-1"></i>{{ $t('plugins.format', '格式化') }}
+            </button>
+            <button class="btn btn-xs btn-outline" @click="$emit('copyPlugin')">
+              <i class="fas fa-copy mr-1"></i>{{ $t('plugins.copyPlugin', '复制插件') }}
+            </button>
+            <button class="btn btn-xs btn-outline" @click="$emit('toggleFullscreen')">
+              <i :class="isFullscreenEditor ? 'fas fa-compress mr-1' : 'fas fa-expand mr-1'"></i>
+              {{ isFullscreenEditor ? '退出全屏' : '全屏' }}
+            </button>
+          </div>
+        </div>
+        <div class="relative border border-base-300 rounded-lg overflow-hidden min-h-96">
+          <div ref="codeEditorContainerRef"></div>
+        </div>
+      </div>
+
+      <PluginValidationReportPanel
+        v-if="validationReport"
+        :report="validationReport"
+        @focus-issue="(sectionKey, issueCode, message) => emit('focusValidationIssue', sectionKey, issueCode, message)"
+      />
+
+      <div v-if="codeError && !isFullscreenEditor" class="alert alert-error mt-4">
+        <i class="fas fa-exclamation-circle"></i><span>{{ codeError }}</span>
+      </div>
+      </div>
+
+      <div class="modal-action plugin-code-editor-actions shrink-0 bg-base-100 border-t border-base-300 pt-3 mt-3">
+        <button class="btn btn-sm" @click="closeDialog">{{ $t('common.close', '关闭') }}</button>
+        <template v-if="editingPlugin">
+          <button v-if="!isEditing" class="btn btn-primary btn-sm" @click="$emit('enableEditing')">
+            <i class="fas fa-edit mr-2"></i>{{ $t('common.edit', '编辑') }}
+          </button>
+          <template v-else>
+            <button class="btn btn-warning btn-sm" @click="$emit('cancelEditing')">{{ $t('plugins.cancelEdit', '取消编辑') }}</button>
+            <button class="btn btn-success btn-sm" :disabled="saving || !isPluginMetadataValid" @click="$emit('savePlugin')">
+              <span v-if="saving" class="loading loading-spinner"></span>
+              {{ saving ? $t('common.saving', '保存中...') : $t('common.save', '保存') }}
+            </button>
+          </template>
+        </template>
+        <template v-else>
+          <button class="btn btn-success btn-sm" :disabled="saving || !isPluginMetadataValid" @click="$emit('createNewPlugin')">
+            <span v-if="saving" class="loading loading-spinner"></span>
+            {{ saving ? $t('plugins.creating', '创建中...') : $t('plugins.createPlugin', '创建插件') }}
+          </button>
+        </template>
+      </div>
+    </div>
+    <form method="dialog" class="modal-backdrop" :class="{ 'invisible pointer-events-none': isFullscreenEditor }"><button @click="closeDialog">close</button></form>
+    <div
+      v-if="editorToast.visible && !isFullscreenEditor"
+      class="plugin-editor-window-toast toast toast-bottom toast-end"
+    >
+      <div class="alert shadow-lg" :class="editorToastClass">
+        <i :class="`fas ${editorToast.iconClass}`"></i><span>{{ editorToast.message }}</span>
+      </div>
+    </div>
+  </AppDialog>
+
+  <!-- Fullscreen Editor Overlay -->
+  <Teleport to="body">
+    <div v-if="isFullscreenEditor && !isMinimized" ref="fullscreenOverlayRef" class="fullscreen-editor-overlay">
+      <!-- Main content with AI panel -->
+      <div class="fullscreen-editor-layout">
+        <!-- Code Editor Area -->
+        <div class="fullscreen-editor-content" :class="{ 'with-ai-panel': showAiPanel }">
+          <div v-show="!isPreviewMode" ref="fullscreenCodeEditorContainerRef" class="h-full w-full"></div>
+          <div v-show="isPreviewMode" class="h-full w-full flex flex-col">
+            <!-- Diff View Header -->
+            <div class="diff-header">
+              <div class="diff-header-content">
+                <i class="fas fa-code-compare mr-2"></i>
+                <span class="font-semibold">{{ $t('plugins.codeComparison', '代码对比') }}</span>
+                <span class="text-sm opacity-70 ml-2">{{ $t('plugins.leftOriginal', '左侧：当前代码') }} | {{ $t('plugins.rightModified', '右侧：AI修改') }}</span>
+              </div>
+              <div class="diff-header-actions">
+                <button class="btn btn-sm btn-primary" @click="$emit('confirmMerge')">
+                  <i class="fas fa-check mr-1"></i>{{ $t('plugins.confirmMerge', '确认合并') }}
+                </button>
+                <button class="btn btn-sm btn-ghost" @click="$emit('exitPreviewMode')">
+                  <i class="fas fa-times mr-1"></i>{{ $t('common.cancel', '取消') }}
+                </button>
+              </div>
+            </div>
+            <!-- Merge View Container -->
+            <div ref="fullscreenDiffEditorContainerRef" class="flex-1 overflow-auto relative"></div>
+          </div>
+        </div>
+
+        <!-- AI Chat Panel -->
+        <AiAssistantPanel
+          :show="showAiPanel"
+          :messages="aiMessages"
+          :streaming="aiStreaming"
+          :streaming-content="aiStreamingContent"
+          :assistant-profile-id="aiAssistantProfileId"
+          :assistant-profile-options="aiAssistantProfileOptions"
+          :assistant-profile-default-label="aiAssistantProfileDefaultLabel"
+          :assistant-profile-invalid="aiAssistantProfileInvalid"
+          :effective-model-label="aiAssistantEffectiveModelLabel"
+          :effective-model-source-label="aiAssistantEffectiveModelSourceLabel"
+          :runtime-meta-text="aiAssistantRuntimeMetaText"
+          :code-ref="selectedCodeRef"
+          :test-result-ref="selectedTestResultRef"
+          @close="$emit('toggleAiPanel')"
+          @send-message="$emit('sendAiMessage', $event)"
+          @update-assistant-profile-id="$emit('updateAiAssistantProfileId', $event)"
+          @quick-action="$emit('aiQuickAction', $event)"
+          @apply-code="(...args) => $emit('applyAiCode', ...args)"
+          @preview-code="$emit('previewAiCode', $event)"
+          @clear-code-ref="$emit('clearCodeRef')"
+          @clear-test-result-ref="$emit('clearTestResultRef')"
+          @clear-history="$emit('clearHistory')"
+        />
+      </div>
+
+      <!-- Floating Toolbar - centered in editor area -->
+      <div 
+        class="fullscreen-floating-toolbar shadow-lg" 
+        :class="{ 
+          'with-ai-panel': showAiPanel && toolbarPosition.x === null && toolbarPosition.y === null,
+          'compact': isCompactToolbar,
+          'dragging': isDraggingToolbar
+        }"
+        :style="{
+          left: toolbarPosition.x !== null ? `${toolbarPosition.x}px` : (showAiPanel ? 'calc((100% - 400px) / 2)' : '50%'),
+          top: toolbarPosition.y !== null ? `${toolbarPosition.y}px` : '1rem',
+          transform: toolbarPosition.x !== null || toolbarPosition.y !== null ? 'none' : 'translateX(-50%)'
+        }"
+      >
+        <!-- Drag Handle -->
+        <div class="toolbar-drag-handle" @mousedown="startToolbarDrag" title="拖动工具栏">
+          <i class="fas fa-grip-vertical"></i>
+        </div>
+        
+        <div class="flex items-center gap-3">
+          <!-- Info Section (hidden in compact mode) -->
+          <div v-if="!isCompactToolbar" class="flex flex-col">
+            <span class="font-bold text-sm">
+              {{ editingPlugin ? editingPlugin.metadata.name : $t('plugins.newPlugin', '新增插件') }}
+            </span>
+            <span v-if="editingPlugin" class="text-xs font-mono">{{ editingPlugin.metadata.id }}</span>
+          </div>
+
+          <div v-if="!isCompactToolbar" class="toolbar-divider"></div>
+
+          <!-- Actions -->
+          <div class="flex items-center gap-2">
+            <!-- Compact Toggle -->
+            <button 
+              class="btn btn-xs btn-ghost" 
+              @click="toggleCompactToolbar" 
+              :title="isCompactToolbar ? '展开工具栏' : '收起工具栏'"
+            >
+              <i :class="isCompactToolbar ? 'fas fa-expand-alt' : 'fas fa-compress-alt'"></i>
+            </button>
+            
+            <div class="toolbar-divider"></div>
+            
+            <!-- AI Toggle Button -->
+            <button class="btn btn-sm" :class="showAiPanel ? 'btn-primary' : 'btn-ghost'" 
+                    @click="$emit('toggleAiPanel')" :title="$t('plugins.aiAssistant', 'AI 助手')">
+              <i class="fas fa-robot"></i>
+              <span v-if="!isCompactToolbar" class="ml-1">AI</span>
+            </button>
+
+            <div class="toolbar-divider"></div>
+
+            <button v-if="!editingPlugin" class="btn btn-sm btn-ghost" @click="$emit('insertTemplate')" :title="$t('plugins.insertTemplate', '插入模板')">
+              <i class="fas fa-file-code"></i>
+            </button>
+            <button class="btn btn-sm btn-ghost" @click="$emit('formatCode')" :title="$t('plugins.format', '格式化')">
+              <i class="fas fa-indent"></i>
+              <span v-if="!isCompactToolbar" class="ml-1">{{ $t('plugins.format', '格式化') }}</span>
+            </button>
+            <button class="btn btn-sm btn-ghost" @click="$emit('copyPlugin')" :title="$t('plugins.copyPlugin', '复制插件')">
+              <i class="fas fa-copy"></i>
+            </button>
+
+            <div class="toolbar-divider"></div>
+
+            <!-- Minimize Button -->
+            <button class="btn btn-sm btn-ghost" @click="$emit('minimize')" :title="$t('common.minimize', '最小化')">
+              <i class="fas fa-window-minimize"></i>
+            </button>
+
+            <div class="toolbar-divider"></div>
+
+            <!-- Test Button -->
+            <button v-if="editingPlugin" 
+                    class="btn btn-sm btn-info" 
+                    :disabled="pluginTesting"
+                    @click="$emit('testCurrentPlugin')" 
+                    :title="$t('plugins.testPlugin', '测试插件')">
+              <span v-if="pluginTesting" class="loading loading-spinner loading-xs"></span>
+              <i v-else class="fas fa-play"></i>
+              <span v-if="!isCompactToolbar" class="ml-1">{{ $t('plugins.test', '测试') }}</span>
+            </button>
+            
+            <template v-if="editingPlugin">
+              <button v-if="!isEditing" class="btn btn-sm btn-primary" @click="$emit('enableEditing')">
+                <i class="fas fa-edit" :class="{ 'mr-1': !isCompactToolbar }"></i>
+                <span v-if="!isCompactToolbar">{{ $t('common.edit', '编辑') }}</span>
+              </button>
+              <button v-if="isEditing" class="btn btn-sm btn-warning" @click="$emit('cancelEditing')">
+                <i class="fas fa-eye" :class="{ 'mr-1': !isCompactToolbar }"></i>
+                <span v-if="!isCompactToolbar">{{ $t('common.readonly', '只读') }}</span>
+              </button>
+            </template>
+
+            <button v-if="isEditing || !editingPlugin" class="btn btn-sm btn-success" :disabled="saving" @click="$emit('savePlugin')">
+              <span v-if="saving" class="loading loading-spinner loading-xs"></span>
+              <template v-else>
+                <i class="fas fa-save" :class="{ 'mr-1': !isCompactToolbar }"></i>
+                <span v-if="!isCompactToolbar">{{ $t('common.save', '保存') }}</span>
+              </template>
+            </button>
+
+            <div class="toolbar-divider"></div>
+
+            <button class="btn btn-sm btn-ghost" @click="$emit('toggleFullscreen')">
+              <i class="fas fa-compress" :class="{ 'mr-1': !isCompactToolbar }"></i>
+              <span v-if="!isCompactToolbar">{{ $t('plugins.exitFullscreen', '退出全屏') }}</span>
+            </button>
+            <kbd v-if="!isCompactToolbar" class="kbd kbd-sm">ESC</kbd>
+          </div>
+        </div>
+      </div>
+
+      <div
+        v-if="editorToast.visible"
+        class="toast toast-bottom toast-end"
+        :style="{
+          position: 'fixed',
+          right: '1rem',
+          bottom: '1rem',
+          zIndex: '2147483647',
+          pointerEvents: 'none'
+        }"
+      >
+        <div class="alert shadow-lg" :class="editorToastClass">
+          <i :class="`fas ${editorToast.iconClass}`"></i><span>{{ editorToast.message }}</span>
+        </div>
+      </div>
+      <div
+        v-else-if="validationReport && validationSummary"
+        class="fullscreen-editor-error toast toast-bottom toast-center"
+      >
+        <div class="alert alert-warning shadow-lg">
+          <i class="fas fa-triangle-exclamation"></i><span>{{ validationSummary }}</span>
+        </div>
+      </div>
+    </div>
+  </Teleport>
+</template>
+
+<script setup lang="ts">
+import { ref, computed, watch, nextTick, onBeforeUnmount } from 'vue'
+import { useI18n } from 'vue-i18n'
+import { invoke } from '@tauri-apps/api/core'
+import type { PluginRecord, NewPluginMetadata, SubCategory, CodeReference, TestResultReference, AiChatMessage } from './types'
+import { extractSeedBindingInputKeyOptions, parseSeedBindingsText, type SeedBindingInputKeyOption } from './seedBindingsSupport'
+import SeedBindingsEditor from './SeedBindingsEditor.vue'
+import type { AiValidationReport, PluginRuntimeSchemaValidationResult } from './aiGeneratedPluginGate'
+import { summarizeAiValidationReport } from './aiGeneratedPluginGate'
+import { mainCategories } from './types'
+import AiAssistantPanel from './AiAssistantPanel.vue'
+import PluginValidationReportPanel from './PluginValidationReportPanel.vue'
+
+interface AssistantProfileChoice {
+  id: string
+  label: string
+}
+
+// Type extension for click outside handler
+declare module '@vue/runtime-core' {
+  interface HTMLElement {
+    _clickOutsideHandler?: (event: MouseEvent) => void
+  }
+}
+
+// Click outside directive implementation
+interface ClickOutsideHTMLElement extends HTMLElement {
+  _clickOutsideHandler?: (event: MouseEvent) => void
+}
+
+const vClickOutside = {
+  mounted(el: ClickOutsideHTMLElement, binding: any) {
+    el._clickOutsideHandler = (event: MouseEvent) => {
+      if (!el.contains(event.target as Node)) {
+        binding.value()
+      }
+    }
+    setTimeout(() => {
+      document.addEventListener('click', el._clickOutsideHandler!)
+    }, 0)
+  },
+  beforeUnmount(el: ClickOutsideHTMLElement) {
+    if (el._clickOutsideHandler) {
+      document.removeEventListener('click', el._clickOutsideHandler)
+    }
+  }
+}
+
+const props = withDefaults(defineProps<{
+  editingPlugin: PluginRecord | null
+  newPluginMetadata: NewPluginMetadata
+  pluginCodeText: string
+  isEditing: boolean
+  saving: boolean
+  codeError: string
+  validationReport: AiValidationReport | null
+  isFullscreenEditor: boolean
+  isMinimized?: boolean
+  subCategories: SubCategory[]
+  // AI related props
+  showAiPanel: boolean
+  aiMessages: AiChatMessage[]
+  aiStreaming: boolean
+  aiStreamingContent: string
+  aiAssistantProfileId?: string | null
+  aiAssistantProfileOptions?: AssistantProfileChoice[]
+  aiAssistantProfileDefaultLabel?: string
+  aiAssistantProfileInvalid?: boolean
+  aiAssistantEffectiveModelLabel?: string
+  aiAssistantEffectiveModelSourceLabel?: string
+  aiAssistantRuntimeMetaText?: string
+  selectedCodeRef: CodeReference | null
+  selectedTestResultRef: TestResultReference | null
+  // Test related props
+  pluginTesting: boolean
+  // Preview related props
+  isPreviewMode?: boolean
+}>(), {
+  aiAssistantProfileId: null,
+  aiAssistantProfileOptions: () => [],
+  aiAssistantProfileDefaultLabel: '未配置',
+  aiAssistantProfileInvalid: false,
+  aiAssistantEffectiveModelLabel: '未配置',
+  aiAssistantEffectiveModelSourceLabel: '未解析',
+  aiAssistantRuntimeMetaText: '',
+})
+
+const { t } = useI18n()
+
+const localizedMainCategories = computed(() => mainCategories.map(category => ({
+  ...category,
+  label: t(`plugins.categories.${category.value}`, category.label),
+})))
+
+const validationSummary = computed(() => summarizeAiValidationReport(props.validationReport))
+
+const emit = defineEmits<{
+  'update:newPluginMetadata': [value: NewPluginMetadata]
+  'insertTemplate': []
+  'formatCode': []
+  'copyPlugin': []
+  'toggleFullscreen': []
+  'enableEditing': []
+  'cancelEditing': []
+  'savePlugin': []
+  'createNewPlugin': []
+  'close': []
+  'minimize': []
+  // AI related emits
+  'toggleAiPanel': []
+  'sendAiMessage': [message: string]
+  'aiQuickAction': [action: string]
+  'applyAiCode': [code: string, context?: CodeReference | null]
+  'previewAiCode': [code: string]
+  'updateAiAssistantProfileId': [profileId: string | null]
+  'exitPreviewMode': []
+  'confirmMerge': []
+  'addSelectedCode': []
+  'addFullCode': []
+  'clearCodeRef': []
+  'clearTestResultRef': []
+  'addTestResultToContext': []
+  'clearHistory': []
+  // Test related emits
+  'testCurrentPlugin': []
+  'focusValidationIssue': [sectionKey: string, issueCode: string, message: string]
+}>()
+
+const codeEditorDialogRef = ref<HTMLDialogElement>()
+const codeEditorContainerRef = ref<HTMLDivElement>()
+const fullscreenCodeEditorContainerRef = ref<HTMLDivElement>()
+const fullscreenDiffEditorContainerRef = ref<HTMLDivElement>()
+const fullscreenOverlayRef = ref<HTMLDivElement>()
+const seedBindingInputKeyOptions = ref<SeedBindingInputKeyOption[]>([])
+const seedBindingInputKeyOptionsLoading = ref(false)
+const seedBindingInputKeyOptionsError = ref('')
+let seedBindingSchemaTimer: ReturnType<typeof setTimeout> | null = null
+let seedBindingSchemaRequestId = 0
+
+// Toolbar state
+const isCompactToolbar = ref(false)
+const toolbarPosition = ref<{ x: number | null, y: number | null }>({ x: null, y: null })
+const isDraggingToolbar = ref(false)
+const dragOffset = ref({ x: 0, y: 0 })
+
+// Shortcuts menu state
+const showShortcutsMenu = ref(false)
+type EditorToastType = 'success' | 'error' | 'info' | 'warning'
+const editorToast = ref<{
+  visible: boolean
+  message: string
+  type: EditorToastType
+  iconClass: string
+}>({
+  visible: false,
+  message: '',
+  type: 'error' as EditorToastType,
+  iconClass: 'fa-times-circle',
+})
+const editorToastIconClass = {
+  success: 'fa-check-circle',
+  error: 'fa-times-circle',
+  info: 'fa-info-circle',
+  warning: 'fa-exclamation-triangle',
+}
+const editorToastClass = computed(() => ({
+  'alert-success': editorToast.value.type === 'success',
+  'alert-error': editorToast.value.type === 'error',
+  'alert-info': editorToast.value.type === 'info',
+  'alert-warning': editorToast.value.type === 'warning',
+}))
+let editorToastTimer: ReturnType<typeof setTimeout> | null = null
+
+const toggleShortcutsMenu = () => {
+  showShortcutsMenu.value = !showShortcutsMenu.value
+}
+
+const showToast = (message: string, type: EditorToastType = 'success') => {
+  const toastType = type || 'success'
+  if (editorToastTimer) {
+    clearTimeout(editorToastTimer)
+  }
+
+  editorToast.value = {
+    visible: true,
+    message,
+    type: toastType,
+    iconClass: editorToastIconClass[toastType],
+  }
+
+  editorToastTimer = setTimeout(() => {
+    editorToast.value.visible = false
+  }, 3000)
+}
+
+const closeShortcutsMenu = () => {
+  showShortcutsMenu.value = false
+}
+
+// Toolbar drag functionality
+const startToolbarDrag = (e: MouseEvent) => {
+  e.preventDefault() // Prevent text selection
+  e.stopPropagation()
+  
+  const toolbar = (e.currentTarget as HTMLElement).parentElement as HTMLElement
+  const overlayRect = fullscreenOverlayRef.value?.getBoundingClientRect()
+  if (!overlayRect) return
+  const rect = toolbar.getBoundingClientRect()
+  
+  // If toolbar is in default position (centered), calculate actual position first
+  if (toolbarPosition.value.x === null && toolbarPosition.value.y === null) {
+    toolbarPosition.value = {
+      x: rect.left - overlayRect.left,
+      y: rect.top - overlayRect.top
+    }
+  }
+  
+  // Calculate drag offset from current toolbar position
+  dragOffset.value = {
+    x: e.clientX - rect.left,
+    y: e.clientY - rect.top
+  }
+  
+  isDraggingToolbar.value = true
+  document.addEventListener('mousemove', handleToolbarDrag)
+  document.addEventListener('mouseup', stopToolbarDrag)
+  document.body.classList.add('toolbar-dragging')
+  document.body.style.userSelect = 'none'
+  document.body.style.cursor = 'grabbing'
+}
+
+const handleToolbarDrag = (e: MouseEvent) => {
+  if (!isDraggingToolbar.value) return
+  e.preventDefault() // Prevent text selection during drag
+  const overlayRect = fullscreenOverlayRef.value?.getBoundingClientRect()
+  if (!overlayRect) return
+  toolbarPosition.value = {
+    x: e.clientX - overlayRect.left - dragOffset.value.x,
+    y: e.clientY - overlayRect.top - dragOffset.value.y
+  }
+}
+
+const stopToolbarDrag = () => {
+  isDraggingToolbar.value = false
+  document.removeEventListener('mousemove', handleToolbarDrag)
+  document.removeEventListener('mouseup', stopToolbarDrag)
+  document.body.classList.remove('toolbar-dragging')
+  document.body.style.userSelect = ''
+  document.body.style.cursor = ''
+}
+
+const toggleCompactToolbar = () => {
+  isCompactToolbar.value = !isCompactToolbar.value
+}
+
+const resetToolbarPosition = () => {
+  toolbarPosition.value = { x: null, y: null }
+}
+
+const requiresExplicitMonitorType = computed(() =>
+  props.newPluginMetadata.mainCategory === 'agent' || props.newPluginMetadata.mainCategory === 'bounty'
+)
+
+const buildRuntimeSchemaValidationMetadata = (metadata: NewPluginMetadata) => ({
+  id: metadata.id,
+  name: metadata.name,
+  main_category: metadata.mainCategory,
+  category: metadata.category,
+  author: metadata.author || null,
+  description: metadata.description || null,
+  default_severity: metadata.default_severity || null,
+  monitor_type: metadata.monitorType || null,
+})
+
+const refreshSeedBindingInputKeyOptions = async () => {
+  const requestId = ++seedBindingSchemaRequestId
+
+  if (!requiresExplicitMonitorType.value) {
+    seedBindingInputKeyOptions.value = []
+    seedBindingInputKeyOptionsError.value = ''
+    seedBindingInputKeyOptionsLoading.value = false
+    return
+  }
+
+  const code = props.pluginCodeText.trim()
+  if (!code) {
+    seedBindingInputKeyOptions.value = []
+    seedBindingInputKeyOptionsError.value = '当前插件代码为空，无法提取 input schema。'
+    seedBindingInputKeyOptionsLoading.value = false
+    return
+  }
+
+  seedBindingInputKeyOptionsLoading.value = true
+  seedBindingInputKeyOptionsError.value = ''
+
+  try {
+    const result = await invoke<PluginRuntimeSchemaValidationResult>('get_plugin_input_schema_from_code', {
+      code,
+      metadata: buildRuntimeSchemaValidationMetadata(props.newPluginMetadata),
+    })
+
+    if (requestId !== seedBindingSchemaRequestId) {
+      return
+    }
+
+    seedBindingInputKeyOptions.value = extractSeedBindingInputKeyOptions(result.schema)
+    seedBindingInputKeyOptionsError.value = result.success
+      ? ''
+      : (result.error || '当前代码的 input schema 无法解析。')
+  } catch (error) {
+    if (requestId !== seedBindingSchemaRequestId) {
+      return
+    }
+    seedBindingInputKeyOptions.value = []
+    seedBindingInputKeyOptionsError.value =
+      error instanceof Error ? error.message : '当前代码的 input schema 无法解析。'
+  } finally {
+    if (requestId === seedBindingSchemaRequestId) {
+      seedBindingInputKeyOptionsLoading.value = false
+    }
+  }
+}
+
+watch(
+  () => [
+    props.pluginCodeText,
+    props.newPluginMetadata.id,
+    props.newPluginMetadata.name,
+    props.newPluginMetadata.mainCategory,
+    props.newPluginMetadata.category,
+    props.newPluginMetadata.author,
+    props.newPluginMetadata.description,
+    props.newPluginMetadata.default_severity,
+    props.newPluginMetadata.monitorType,
+  ],
+  () => {
+    if (seedBindingSchemaTimer) {
+      clearTimeout(seedBindingSchemaTimer)
+    }
+    seedBindingSchemaTimer = setTimeout(() => {
+      void refreshSeedBindingInputKeyOptions()
+    }, 250)
+  },
+  { immediate: true },
+)
+
+onBeforeUnmount(() => {
+  if (seedBindingSchemaTimer) {
+    clearTimeout(seedBindingSchemaTimer)
+  }
+  if (editorToastTimer) {
+    clearTimeout(editorToastTimer)
+    editorToastTimer = null
+  }
+})
+
+const seedBindingsError = computed(() => {
+  if (!requiresExplicitMonitorType.value) {
+    return ''
+  }
+  return parseSeedBindingsText(props.newPluginMetadata.seedBindingsText || '[]').error
+})
+
+const isPluginMetadataValid = computed(() => {
+  if (props.newPluginMetadata.id.trim() === '' || props.newPluginMetadata.name.trim() === '') {
+    return false
+  }
+
+  if (requiresExplicitMonitorType.value && props.newPluginMetadata.monitorType.trim() === '') {
+    return false
+  }
+
+  if (seedBindingsError.value) {
+    return false
+  }
+
+  return true
+})
+
+const monitorTypeOptions = [
+  { value: 'dns', label: 'DNS监控' },
+  { value: 'ip', label: 'IP监控' },
+  { value: 'port', label: '端口监控' },
+  { value: 'service', label: '服务监控' },
+  { value: 'web', label: 'Web监控' },
+  { value: 'cert', label: 'SSL证书监控' },
+  { value: 'api', label: 'API监控' },
+  { value: 'content', label: '内容监控' },
+  { value: 'risk', label: '风险监控' },
+]
+
+const inputModeOptions = [
+  { value: 'asset', label: 'asset - 资产驱动' },
+  { value: 'seed', label: 'seed - 种子驱动' },
+  { value: 'hybrid', label: 'hybrid - 混合驱动' },
+]
+
+const updateMetadata = (key: keyof NewPluginMetadata, value: string) => {
+  emit('update:newPluginMetadata', { ...props.newPluginMetadata, [key]: value })
+}
+
+const handleDialogCancel = (e: Event) => {
+  e.preventDefault()
+  if (props.isFullscreenEditor) {
+    emit('toggleFullscreen')
+  } else {
+    closeDialog()
+  }
+}
+
+const showDialog = () => codeEditorDialogRef.value?.showModal()
+const closeDialog = () => { codeEditorDialogRef.value?.close(); emit('close') }
+
+// 临时隐藏 dialog 的 modal 状态，让全屏编辑器能接收事件
+const hideModalTemporary = () => {
+  codeEditorDialogRef.value?.close()
+}
+
+// 恢复 dialog 的 modal 状态
+const restoreModal = () => {
+  codeEditorDialogRef.value?.showModal()
+}
+
+defineExpose({
+  showDialog, closeDialog,
+  hideModalTemporary, restoreModal,
+  codeEditorContainerRef, fullscreenCodeEditorContainerRef, fullscreenDiffEditorContainerRef,
+  showToast,
+})
+</script>
+
+<style scoped>
+.fullscreen-editor-overlay {
+  position: fixed;
+  top: 4rem; /* navbar height */
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: calc(100vh - 4rem);
+  z-index: 999999;
+  background: oklch(var(--b1));
+  display: block;
+}
+
+/* 全屏模式下禁用 dialog 的 pointer-events，让事件穿透到全屏编辑器覆盖层 */
+:global(dialog.fullscreen-mode-active) {
+  pointer-events: none !important;
+}
+
+:global(dialog.fullscreen-mode-active::backdrop) {
+  pointer-events: none !important;
+  opacity: 0;
+}
+
+/* 确保全屏编辑器覆盖层内所有元素能正确接收事件 */
+.fullscreen-editor-overlay * {
+  pointer-events: auto;
+}
+
+.plugin-editor-window-toast {
+  position: fixed;
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  z-index: 2147483647;
+  pointer-events: none;
+}
+
+.plugin-editor-window-toast .alert {
+  pointer-events: auto;
+}
+
+/* Floating Toolbar - centered in editor area, follows theme */
+.fullscreen-floating-toolbar {
+  position: absolute;
+  top: 1rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.75rem 1.25rem;
+  padding-left: 0.5rem; /* Less padding on left for drag handle */
+  background: oklch(var(--b2));
+  border: 1px solid oklch(var(--bc) / 0.2);
+  border-radius: 1rem;
+  z-index: 100;
+  box-shadow: 0 10px 25px -5px rgb(0 0 0 / 0.2), 0 8px 10px -6px rgb(0 0 0 / 0.15);
+  transition: left 0.3s ease, transform 0.3s ease;
+  color: oklch(var(--bc));
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Dragging state */
+.fullscreen-floating-toolbar.dragging {
+  cursor: grabbing;
+  transition: none;
+  box-shadow: 0 20px 40px -10px rgb(0 0 0 / 0.4), 0 16px 20px -12px rgb(0 0 0 / 0.3);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Disable text selection globally when dragging */
+:global(body.toolbar-dragging) {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+  cursor: grabbing !important;
+}
+
+/* Compact mode */
+.fullscreen-floating-toolbar.compact {
+  padding: 0.5rem;
+  padding-left: 0.5rem;
+}
+
+/* Drag Handle */
+.toolbar-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.5rem;
+  height: 2rem;
+  cursor: grab;
+  color: oklch(var(--bc) / 0.4);
+  border-right: 1px solid oklch(var(--bc) / 0.1);
+  margin-right: 0.5rem;
+  transition: color 0.2s, background 0.2s;
+  border-radius: 0.5rem 0 0 0.5rem;
+  user-select: none;
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+}
+
+.toolbar-drag-handle:hover {
+  color: oklch(var(--bc) / 0.7);
+  background: oklch(var(--bc) / 0.05);
+}
+
+.toolbar-drag-handle:active {
+  cursor: grabbing;
+  color: oklch(var(--p));
+}
+
+/* Prevent text selection during drag */
+.fullscreen-floating-toolbar.dragging,
+.fullscreen-floating-toolbar.dragging * {
+  user-select: none !important;
+  -webkit-user-select: none !important;
+  -moz-user-select: none !important;
+  -ms-user-select: none !important;
+}
+
+/* When AI panel is open, center toolbar in editor area only */
+.fullscreen-floating-toolbar.with-ai-panel {
+  left: calc((100% - 400px) / 2);
+}
+
+/* Toolbar text follows theme */
+.fullscreen-floating-toolbar span,
+.fullscreen-floating-toolbar .font-bold,
+.fullscreen-floating-toolbar .text-xs {
+  color: oklch(var(--bc)) !important;
+}
+
+/* Toolbar divider */
+.fullscreen-floating-toolbar .toolbar-divider {
+  width: 1px;
+  height: 1.5rem;
+  background: oklch(var(--bc) / 0.2);
+  margin: 0 0.25rem;
+}
+
+/* Buttons follow theme */
+.fullscreen-floating-toolbar .btn {
+  color: oklch(var(--bc));
+  border-color: oklch(var(--bc) / 0.2);
+  background: oklch(var(--b1));
+}
+
+.fullscreen-floating-toolbar .btn:hover {
+  background: oklch(var(--b3));
+}
+
+.fullscreen-floating-toolbar .btn-ghost {
+  color: oklch(var(--bc));
+  background: transparent;
+  border-color: transparent;
+}
+
+.fullscreen-floating-toolbar .btn-ghost:hover {
+  background: oklch(var(--b3));
+}
+
+.fullscreen-floating-toolbar .btn-primary {
+  background: oklch(var(--p));
+  color: oklch(var(--pc));
+  border-color: oklch(var(--p));
+}
+
+.fullscreen-floating-toolbar .btn-primary:hover {
+  filter: brightness(0.9);
+}
+
+.fullscreen-floating-toolbar .btn-success {
+  background: oklch(var(--su));
+  color: oklch(var(--suc));
+  border-color: oklch(var(--su));
+}
+
+.fullscreen-floating-toolbar .btn-success:hover {
+  filter: brightness(0.9);
+}
+
+.fullscreen-floating-toolbar .btn-warning {
+  background: oklch(var(--wa));
+  color: oklch(var(--wac));
+  border-color: oklch(var(--wa));
+}
+
+.fullscreen-floating-toolbar .btn-warning:hover {
+  filter: brightness(0.9);
+}
+
+.fullscreen-floating-toolbar .kbd {
+  background: oklch(var(--b3));
+  color: oklch(var(--bc));
+  border-color: oklch(var(--bc) / 0.2);
+}
+
+/* Layout for fullscreen with AI panel */
+.fullscreen-editor-layout {
+  display: flex;
+  width: 100%;
+  height: 100%;
+  background: oklch(var(--b1));
+  position: relative;
+  isolation: isolate;
+}
+
+.fullscreen-editor-content {
+  flex: 1;
+  height: 100%;
+  overflow: hidden;
+  transition: width 0.3s ease;
+  background: oklch(var(--b1));
+}
+
+.fullscreen-editor-content.with-ai-panel {
+  width: calc(100% - 400px);
+}
+
+.fullscreen-editor-content :deep(.cm-editor) {
+  height: 100%;
+}
+
+.fullscreen-editor-content :deep(.cm-scroller) {
+  overflow: auto;
+  padding-top: 1rem;
+}
+
+.fullscreen-editor-content :deep(.cm-content) {
+  padding-top: 1rem;
+  padding-bottom: 2rem;
+}
+
+/* Diff View Header */
+.diff-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: oklch(var(--b3));
+  border-bottom: 1px solid oklch(var(--bc) / 0.15);
+  color: oklch(var(--bc));
+}
+
+.diff-header-content {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.diff-header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+/* Diff Editor Container */
+.fullscreen-editor-content :deep(.cm-merge-view) {
+  height: 100%;
+  display: flex;
+}
+
+.fullscreen-editor-content :deep(.cm-merge-a),
+.fullscreen-editor-content :deep(.cm-merge-b) {
+  flex: 1;
+  height: 100%;
+}
+
+.fullscreen-editor-content :deep(.cm-merge-spacer) {
+  width: 2px;
+  background: oklch(var(--bc) / 0.2);
+}
+
+/* Responsive */
+@media (max-width: 1024px) {
+  .ai-chat-panel {
+    width: 320px;
+  }
+  
+  .fullscreen-editor-content.with-ai-panel {
+    width: calc(100% - 320px);
+  }
+  
+  .fullscreen-floating-toolbar.with-ai-panel {
+    left: calc((100% - 320px) / 2);
+  }
+}
+/* Shortcuts menu animation */
+.fade-scale-enter-active,
+.fade-scale-leave-active {
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.fade-scale-enter-from {
+  opacity: 0;
+  transform: scale(0.95) translateY(-10px);
+}
+
+.fade-scale-leave-to {
+  opacity: 0;
+  transform: scale(0.95) translateY(-10px);
+}
+
+.fade-scale-enter-to,
+.fade-scale-leave-from {
+  opacity: 1;
+  transform: scale(1) translateY(0);
+}
+</style>

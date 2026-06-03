@@ -1,0 +1,830 @@
+use anyhow::Result;
+use chrono::Utc;
+use serde_json::{json, Value};
+
+use std::collections::VecDeque;
+use std::sync::Arc;
+use tauri::{AppHandle, Emitter, Manager};
+use tracing::info; // Removed warn
+
+use crate::agents::context_engineering::budget::ContextBudgetAnalyzer;
+use crate::agents::context_engineering::token_utils::estimate_tokens;
+use crate::agents::context_engineering::tool_digest::condense_text;
+use sentinel_db::Database;
+use sentinel_llm::{ChatMessage, LlmClient, LlmConfig};
+
+/// Configuration for sliding window manager
+#[derive(Debug, Clone)]
+pub struct SlidingWindowConfig {
+    /// Number of messages per segment (trigger threshold)
+    pub segment_size: usize,
+    /// Number of recent messages to keep fully intact
+    pub recent_message_count: usize,
+    /// Max number of segment summaries to keep before merging to global
+    pub max_segment_summaries: usize,
+    /// Max context tokens (dynamically loaded from provider config)
+    pub max_context_tokens: usize,
+    /// Token allocation ratio for global summary
+    pub global_summary_ratio: f64,
+    /// Token allocation ratio for segment summaries
+    pub segment_summary_ratio: f64,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct SlidingWindowSummaryStats {
+    pub global_summary_tokens: usize,
+    pub segment_summary_tokens: usize,
+    pub segment_count: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct SlidingWindowCompressionEventContext<'a> {
+    pub execution_id: &'a str,
+    pub generation: Option<u64>,
+}
+
+impl Default for SlidingWindowConfig {
+    fn default() -> Self {
+        Self {
+            segment_size: 20,
+            recent_message_count: 20,
+            max_segment_summaries: 10,
+            max_context_tokens: 128000,
+            global_summary_ratio: 0.08, // 8% for global summary
+            segment_summary_ratio: 0.15, // 15% for segment summaries
+                                        // Remaining ~77% for history, but we reserve 30% for system prompt + tools
+                                        // So effective history budget is ~47% of max_context_tokens
+        }
+    }
+}
+
+// 从 sentinel-core 导入模型定义
+pub use sentinel_core::models::database::{ConversationSegment, GlobalSummary};
+
+/// Manager for sliding window memory
+pub struct SlidingWindowManager {
+    app_handle: AppHandle,
+    conversation_id: String,
+    db: Arc<dyn Database>,
+    config: SlidingWindowConfig,
+
+    // Memory State
+    global_summary: Option<GlobalSummary>,
+    segments: VecDeque<ConversationSegment>,
+    recent_messages: VecDeque<ChatMessage>,
+
+    // Metadata
+    total_processed_messages: i32,
+}
+
+const SUMMARY_INPUT_MAX_CHARS: usize = 12_000;
+
+impl SlidingWindowManager {
+    /// Initialize manager, ensuring tables exist and loading state
+    pub async fn new(
+        app_handle: &AppHandle,
+        conversation_id: &str,
+        config: Option<SlidingWindowConfig>,
+    ) -> Result<Self> {
+        let db = app_handle.state::<Arc<dyn Database>>().inner().clone();
+
+        // Ensure tables exist
+        db.ensure_sliding_window_tables_exist().await?;
+
+        // Load config
+        let final_config = config.unwrap_or_default();
+
+        // Load state from DB
+        let (global_summary, segments) = db.get_sliding_window_summaries(conversation_id).await?;
+
+        // Determine where we left off
+        let last_summarized_index = segments
+            .iter()
+            .last()
+            .map(|s| s.end_message_index)
+            .or_else(|| global_summary.as_ref().map(|g| g.covers_up_to_index))
+            .unwrap_or(-1);
+
+        // Load recent messages
+        let recent_messages =
+            Self::load_recent_messages(&db, conversation_id, last_summarized_index).await?;
+
+        let total_processed_messages = last_summarized_index + 1 + recent_messages.len() as i32;
+
+        Ok(Self {
+            app_handle: app_handle.clone(),
+            conversation_id: conversation_id.to_string(),
+            db,
+            config: final_config,
+            global_summary,
+            segments: segments.into(),
+            recent_messages: recent_messages.into(),
+            total_processed_messages,
+        })
+    }
+
+    async fn load_recent_messages(
+        db: &Arc<dyn Database>,
+        conversation_id: &str,
+        after_index: i32,
+    ) -> Result<Vec<ChatMessage>> {
+        let all_messages = db.get_ai_messages_by_conversation(conversation_id).await?;
+
+        // Convert to ChatMessage
+        let chat_messages = crate::commands::ai::reconstruct_chat_history(&all_messages);
+
+        // Skip already summarized ones
+        // Assuming strict ordering: summarized count = after_index + 1
+        let skip_count = (after_index + 1) as usize;
+
+        if skip_count >= chat_messages.len() {
+            if !chat_messages.is_empty() && after_index >= 0 {
+                tracing::warn!(
+                    "Sliding window skip_count {} exceeds message count {} for conversation {}, returning full history",
+                    skip_count,
+                    chat_messages.len(),
+                    conversation_id
+                );
+                return Ok(chat_messages);
+            }
+            return Ok(Vec::new());
+        }
+
+        Ok(chat_messages.into_iter().skip(skip_count).collect())
+    }
+
+    /// Add a new message to the recent window (in-memory only, persistence is handled by executor)
+    pub fn add_message(&mut self, message: ChatMessage) {
+        self.recent_messages.push_back(message);
+        self.total_processed_messages += 1;
+    }
+
+    /// Build the context for LLM execution
+    pub fn build_context(&self, system_prompt: &str) -> Vec<ChatMessage> {
+        build_context_messages(system_prompt, &self.recent_messages)
+    }
+
+    pub fn render_summary_context(&self) -> String {
+        render_summary_context(self.global_summary.as_ref(), &self.segments)
+    }
+
+    pub fn summary_stats(&self) -> SlidingWindowSummaryStats {
+        let global_summary_tokens = self
+            .global_summary
+            .as_ref()
+            .map(|summary| {
+                if summary.summary_tokens > 0 {
+                    summary.summary_tokens as usize
+                } else {
+                    estimate_tokens(&summary.summary)
+                }
+            })
+            .unwrap_or(0);
+
+        let segment_summary_tokens = self
+            .segments
+            .iter()
+            .map(|segment| {
+                if segment.summary_tokens > 0 {
+                    segment.summary_tokens as usize
+                } else {
+                    estimate_tokens(&segment.summary)
+                }
+            })
+            .sum();
+
+        SlidingWindowSummaryStats {
+            global_summary_tokens,
+            segment_summary_tokens,
+            segment_count: self.segments.len(),
+        }
+    }
+
+    /// Check and compress history if needed
+    /// Returns true if compression occurred
+    pub async fn compress_if_needed(
+        &mut self,
+        llm_config: &LlmConfig,
+        event_context: Option<SlidingWindowCompressionEventContext<'_>>,
+    ) -> Result<bool> {
+        // Calculate tokens for all message components
+        let recent_tokens: usize = self
+            .recent_messages
+            .iter()
+            .map(|m| {
+                let mut tokens = estimate_tokens(&m.content);
+                if let Some(ref tc) = m.tool_calls {
+                    tokens += estimate_tokens(tc);
+                }
+                if let Some(ref rc) = m.reasoning_content {
+                    tokens += estimate_tokens(rc);
+                }
+                tokens
+            })
+            .sum();
+
+        let budget = ContextBudgetAnalyzer::new(self.config.max_context_tokens);
+        let threshold_tokens = budget.history_segment_threshold(
+            self.config.global_summary_ratio,
+            self.config.segment_summary_ratio,
+        );
+
+        let should_segment = self.recent_messages.len() > self.config.recent_message_count
+            || recent_tokens > threshold_tokens;
+
+        if should_segment {
+            let reason = match (
+                self.recent_messages.len() > self.config.recent_message_count,
+                recent_tokens > threshold_tokens,
+            ) {
+                (true, true) => "message_count_and_token_threshold",
+                (true, false) => "message_count",
+                (false, true) => "token_threshold",
+                (false, false) => "unknown",
+            };
+            info!(
+                "Triggering sliding window compression. Messages: {}, Tokens: {}/{}",
+                self.recent_messages.len(),
+                recent_tokens,
+                threshold_tokens
+            );
+
+            self.emit_compression_event(
+                "agent:context_compression_started",
+                event_context.as_ref(),
+                json!({
+                    "status": "running",
+                    "reason": reason,
+                    "recent_tokens": recent_tokens,
+                    "threshold_tokens": threshold_tokens,
+                    "message_count": self.recent_messages.len(),
+                    "recent_message_count": self.config.recent_message_count,
+                }),
+            );
+
+            let force_token_threshold_summary = recent_tokens > threshold_tokens;
+            if let Err(error) = self
+                .create_segment_summary(llm_config, force_token_threshold_summary)
+                .await
+            {
+                self.emit_compression_event(
+                    "agent:context_compression_finished",
+                    event_context.as_ref(),
+                    json!({
+                        "status": "failed",
+                        "reason": reason,
+                        "recent_tokens": recent_tokens,
+                        "threshold_tokens": threshold_tokens,
+                        "message_count": self.recent_messages.len(),
+                        "recent_message_count": self.config.recent_message_count,
+                        "error": error.to_string(),
+                    }),
+                );
+                return Err(error);
+            }
+
+            // After creating a segment, check if we need to merge to global summary
+            let mut merged_global = false;
+            if self.segments.len() > self.config.max_segment_summaries {
+                if let Err(error) = self.merge_to_global_summary(llm_config).await {
+                    self.emit_compression_event(
+                        "agent:context_compression_finished",
+                        event_context.as_ref(),
+                        json!({
+                            "status": "failed",
+                            "reason": reason,
+                            "recent_tokens": recent_tokens,
+                            "threshold_tokens": threshold_tokens,
+                            "message_count": self.recent_messages.len(),
+                            "recent_message_count": self.config.recent_message_count,
+                            "error": error.to_string(),
+                        }),
+                    );
+                    return Err(error);
+                }
+                merged_global = true;
+            }
+
+            let summary_stats = self.summary_stats();
+            self.emit_compression_event(
+                "agent:context_compression_finished",
+                event_context.as_ref(),
+                json!({
+                    "status": "completed",
+                    "reason": reason,
+                    "recent_tokens": recent_tokens,
+                    "threshold_tokens": threshold_tokens,
+                    "message_count": self.recent_messages.len(),
+                    "recent_message_count": self.config.recent_message_count,
+                    "summary_segment_count": summary_stats.segment_count,
+                    "summary_segment_tokens": summary_stats.segment_summary_tokens,
+                    "summary_global_tokens": summary_stats.global_summary_tokens,
+                    "merged_global": merged_global,
+                }),
+            );
+
+            return Ok(true);
+        }
+
+        Ok(false)
+    }
+
+    fn emit_compression_event(
+        &self,
+        event_name: &str,
+        context: Option<&SlidingWindowCompressionEventContext<'_>>,
+        mut payload: Value,
+    ) {
+        let Some(context) = context else {
+            return;
+        };
+        if let Some(object) = payload.as_object_mut() {
+            object.insert(
+                "conversation_id".to_string(),
+                Value::String(self.conversation_id.clone()),
+            );
+            object.insert(
+                "execution_id".to_string(),
+                Value::String(context.execution_id.to_string()),
+            );
+            object.insert(
+                "generation".to_string(),
+                context.generation.map(Value::from).unwrap_or(Value::Null),
+            );
+        }
+        let _ = self.app_handle.emit(event_name, &payload);
+    }
+
+    async fn create_segment_summary(
+        &mut self,
+        llm_config: &LlmConfig,
+        force_token_threshold_summary: bool,
+    ) -> Result<()> {
+        if self.recent_messages.is_empty() {
+            return Ok(());
+        }
+
+        // Determine how many messages to summarize
+        // We keep the most recent 'recent_message_count' / 2 messages to maintain context continuity
+        let mut keep_count = segment_keep_count(
+            self.recent_messages.len(),
+            self.config.recent_message_count,
+            force_token_threshold_summary,
+        );
+        keep_count = self.adjust_keep_count_for_tool_boundaries(keep_count);
+        if self.recent_messages.len() <= keep_count {
+            return Ok(());
+        }
+
+        let summarize_count = self.recent_messages.len() - keep_count;
+        let mut messages_to_summarize = Vec::new();
+
+        for _ in 0..summarize_count {
+            if let Some(msg) = self.recent_messages.pop_front() {
+                messages_to_summarize.push(msg);
+            }
+        }
+
+        if messages_to_summarize.is_empty() {
+            return Ok(());
+        }
+
+        // Generate summary
+        let summary_text = self
+            .generate_summary(&messages_to_summarize, llm_config)
+            .await?;
+        let summary_tokens = estimate_tokens(&summary_text) as i32;
+
+        // Calculate indices (based on what we tracked)
+        // The start index is what follows the last known index.
+        let last_index = self
+            .segments
+            .iter()
+            .last()
+            .map(|s| s.end_message_index)
+            .or_else(|| self.global_summary.as_ref().map(|g| g.covers_up_to_index))
+            .unwrap_or(-1);
+
+        let start_index = last_index + 1;
+        let end_index = start_index + messages_to_summarize.len() as i32 - 1;
+
+        let segment_index = self
+            .segments
+            .iter()
+            .last()
+            .map(|s| s.segment_index + 1)
+            .unwrap_or(0);
+
+        let segment = ConversationSegment {
+            id: uuid::Uuid::new_v4().to_string(),
+            conversation_id: self.conversation_id.clone(),
+            segment_index,
+            start_message_index: start_index,
+            end_message_index: end_index,
+            summary: summary_text,
+            summary_tokens,
+            created_at: Utc::now().timestamp(),
+        };
+
+        // Save to DB
+        self.db.save_conversation_segment(&segment).await?;
+
+        self.segments.push_back(segment.clone());
+
+        info!(
+            "Created segment summary #{} covering messages {}-{}",
+            segment_index, start_index, end_index
+        );
+
+        let _ = self.app_handle.emit(
+            "agent:segment_summary_created",
+            &json!({
+                "conversation_id": self.conversation_id,
+                "segment_index": segment.segment_index,
+                "summary": segment.summary,
+                "tokens": segment.summary_tokens
+            }),
+        );
+
+        Ok(())
+    }
+
+    async fn merge_to_global_summary(&mut self, llm_config: &LlmConfig) -> Result<()> {
+        let excess_count = self
+            .segments
+            .len()
+            .saturating_sub(self.config.max_segment_summaries / 2); // Merge half
+        if excess_count == 0 {
+            return Ok(());
+        }
+
+        let mut segments_to_merge = Vec::new();
+        for _ in 0..excess_count {
+            if let Some(seg) = self.segments.pop_front() {
+                segments_to_merge.push(seg);
+            }
+        }
+
+        if segments_to_merge.is_empty() {
+            return Ok(());
+        }
+
+        let new_covers_up_to = segments_to_merge.last().unwrap().end_message_index;
+
+        // Prepare prompt
+        let mut prompt = String::new();
+        if let Some(global) = &self.global_summary {
+            prompt.push_str("Current Global Summary:\n");
+            prompt.push_str(&global.summary);
+            prompt.push_str("\n\n");
+        }
+
+        prompt.push_str("New Activity Segments to Merge:\n");
+        for seg in &segments_to_merge {
+            prompt.push_str(&format!("- {}\n", seg.summary));
+        }
+
+        prompt.push_str(
+            "\n\nTask: Integrate the new activity segments into the global summary. Maintain a coherent narrative of the user's goals, key decisions, and progress. Remove obsolete details. Preserve exact user-provided literals (URLs, file paths, host:port, identifiers, commands) and include them verbatim in a 'Key User Inputs' section."
+        );
+
+        let client = LlmClient::new(llm_config.clone());
+        let new_summary_text = client.completion(
+            Some("You are a memory consolidation assistant. Merge the conversation logs into a concise global summary."),
+            &prompt
+        ).await?;
+
+        let new_summary_tokens = estimate_tokens(&new_summary_text) as i32;
+        let new_summary = GlobalSummary {
+            id: uuid::Uuid::new_v4().to_string(),
+            conversation_id: self.conversation_id.clone(),
+            summary: new_summary_text,
+            summary_tokens: new_summary_tokens,
+            covers_up_to_index: new_covers_up_to,
+            updated_at: Utc::now().timestamp(),
+        };
+
+        // Save to DB (Upsert)
+        self.db.upsert_global_summary(&new_summary).await?;
+
+        self.global_summary = Some(new_summary.clone());
+
+        // Delete merged segments from DB
+        let ids: Vec<String> = segments_to_merge.iter().map(|s| s.id.clone()).collect();
+        self.db.delete_conversation_segments(&ids).await?;
+
+        info!(
+            "Merged segments into global summary. Covered up to index {}",
+            new_covers_up_to
+        );
+
+        let _ = self.app_handle.emit(
+            "agent:global_summary_updated",
+            &json!({
+                "conversation_id": self.conversation_id,
+                "summary": new_summary.summary,
+                "tokens": estimate_tokens(&new_summary.summary)
+            }),
+        );
+
+        Ok(())
+    }
+
+    async fn generate_summary(
+        &self,
+        messages: &[ChatMessage],
+        llm_config: &LlmConfig,
+    ) -> Result<String> {
+        let mut content = String::new();
+        for msg in messages {
+            let mut msg_content = msg.content.clone();
+            if msg.role == "tool" {
+                if let Some(condensed) = condense_tool_output(&msg.content) {
+                    msg_content = condensed;
+                } else {
+                    msg_content = trim_text(&msg.content, 12, 800);
+                }
+            } else if msg.content.len() > 1200 {
+                msg_content = trim_text(&msg.content, 12, 1200);
+            }
+
+            content.push_str(&format!("{}: {}\n", msg.role, msg_content));
+            if let Some(tool_calls) = &msg.tool_calls {
+                content.push_str(&format!("[Tool Calls: {}]\n", tool_calls));
+            }
+        }
+
+        if content.len() > SUMMARY_INPUT_MAX_CHARS {
+            content = condense_text(&content, SUMMARY_INPUT_MAX_CHARS);
+        }
+
+        let prompt = format!(
+            "Summarize the following conversation segment. Use only facts explicitly present in the messages; do not infer completion or success unless a tool result or assistant message states it. If uncertain, label as Unknown. Focus on task key facts, decisions, and tool results. For shell, keep command, completion status, and only short output snippets; omit long logs. Preserve exact user-provided literals (URLs, file paths, host:port, identifiers, commands) and include them verbatim in a 'Key User Inputs' section.\n\n{}",
+            content
+        );
+
+        let client = LlmClient::new(llm_config.clone());
+        client.completion(
+            Some("You are a conversation summarizer. Create a concise, structured summary of the events."),
+            &prompt
+        ).await
+    }
+
+    fn adjust_keep_count_for_tool_boundaries(&self, keep_count: usize) -> usize {
+        if self.recent_messages.is_empty() || keep_count == 0 {
+            return keep_count;
+        }
+
+        let mut adjusted = keep_count;
+        loop {
+            let boundary = self.recent_messages.len().saturating_sub(adjusted);
+            if boundary >= self.recent_messages.len() {
+                break;
+            }
+            let msg = &self.recent_messages[boundary];
+            if msg.role == "tool" {
+                if adjusted == 0 {
+                    break;
+                }
+                adjusted = adjusted.saturating_sub(1);
+                continue;
+            }
+            break;
+        }
+
+        adjusted
+    }
+
+    /// Export full conversation history to formatted string
+    pub async fn export_history(&self) -> Result<String> {
+        let all_messages = self
+            .db
+            .get_ai_messages_by_conversation(&self.conversation_id)
+            .await?;
+
+        let mut content = String::new();
+        content.push_str(&format!(
+            "=== Conversation History: {} ===\n",
+            self.conversation_id
+        ));
+        content.push_str(&format!("Total Messages: {}\n", all_messages.len()));
+        content.push_str(&format!(
+            "Exported At: {}\n\n",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        ));
+
+        for (idx, msg) in all_messages.iter().enumerate() {
+            content.push_str(&format!(
+                "--- Message #{} [{} at {}] ---\n",
+                idx + 1,
+                msg.role,
+                msg.timestamp.format("%Y-%m-%d %H:%M:%S")
+            ));
+            content.push_str(&msg.content);
+            content.push_str("\n\n");
+        }
+
+        Ok(content)
+    }
+}
+
+fn condense_tool_output(raw: &str) -> Option<String> {
+    let value: Value = serde_json::from_str(raw).ok()?;
+    let obj = value.as_object()?;
+
+    // shell tool output
+    if obj.contains_key("command") && obj.contains_key("stdout") && obj.contains_key("stderr") {
+        let command = obj.get("command").and_then(|v| v.as_str()).unwrap_or("");
+        let exit_code = obj
+            .get("exit_code")
+            .and_then(|v| v.as_i64())
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+        let completed = obj
+            .get("completed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(true);
+        let output_stored = obj
+            .get("output_stored")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let stdout = obj.get("stdout").and_then(|v| v.as_str()).unwrap_or("");
+        let stderr = obj.get("stderr").and_then(|v| v.as_str()).unwrap_or("");
+        let stdout_snip = trim_text(stdout, 8, 500);
+        let stderr_snip = trim_text(stderr, 6, 400);
+        return Some(format!(
+            "shell: command=\"{}\" exit_code={} completed={} output_stored={} stdout_snip=\"{}\" stderr_snip=\"{}\"",
+            command, exit_code, completed, output_stored, stdout_snip, stderr_snip
+        ));
+    }
+
+    // PTY-backed shell session output
+    if obj.contains_key("session_id") && obj.contains_key("output") && obj.contains_key("completed")
+    {
+        let command = obj.get("command").and_then(|v| v.as_str()).unwrap_or("");
+        let completed = obj
+            .get("completed")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let truncated = obj
+            .get("truncated")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+        let output = obj.get("output").and_then(|v| v.as_str()).unwrap_or("");
+        let output_snip = trim_text(output, 10, 600);
+        return Some(format!(
+            "shell_session: command=\"{}\" completed={} truncated={} output_snip=\"{}\"",
+            command, completed, truncated, output_snip
+        ));
+    }
+
+    None
+}
+
+fn render_summary_context(
+    global_summary: Option<&GlobalSummary>,
+    segments: &VecDeque<ConversationSegment>,
+) -> String {
+    let mut context = String::new();
+
+    if let Some(global) = global_summary {
+        let summary = global.summary.trim();
+        if !summary.is_empty() {
+            context.push_str("[LongTermMemory]\n");
+            context.push_str(summary);
+        }
+    }
+
+    let segment_summaries = segments
+        .iter()
+        .map(|segment| segment.summary.trim())
+        .filter(|summary| !summary.is_empty())
+        .collect::<Vec<_>>();
+    if !segment_summaries.is_empty() {
+        if !context.is_empty() {
+            context.push_str("\n\n");
+        }
+        context.push_str("[RecentActivitySummary]\n");
+        for summary in segment_summaries {
+            context.push_str("- ");
+            context.push_str(summary);
+            context.push('\n');
+        }
+    }
+
+    context.trim().to_string()
+}
+
+fn build_context_messages(
+    system_prompt: &str,
+    recent_messages: &VecDeque<ChatMessage>,
+) -> Vec<ChatMessage> {
+    let mut context = Vec::new();
+
+    context.push(ChatMessage {
+        role: "system".to_string(),
+        content: system_prompt.to_string(),
+        tool_calls: None,
+        tool_call_id: None,
+        reasoning_content: None,
+    });
+
+    for msg in recent_messages {
+        context.push(msg.clone());
+    }
+
+    context
+}
+
+fn segment_keep_count(
+    recent_len: usize,
+    recent_message_count: usize,
+    force_token_threshold_summary: bool,
+) -> usize {
+    let base_keep_count = (recent_message_count / 2).min(recent_len);
+    if force_token_threshold_summary && recent_len > 0 {
+        base_keep_count.min(recent_len.saturating_sub(1))
+    } else {
+        base_keep_count
+    }
+}
+
+fn trim_text(text: &str, max_lines: usize, max_chars: usize) -> String {
+    if text.is_empty() {
+        return String::new();
+    }
+
+    let mut lines = text.lines().take(max_lines).collect::<Vec<_>>().join("\n");
+    if lines.len() > max_chars {
+        let mut boundary = max_chars.min(lines.len());
+        while boundary > 0 && !lines.is_char_boundary(boundary) {
+            boundary -= 1;
+        }
+        lines.truncate(boundary);
+    }
+
+    if text.lines().count() > max_lines || text.len() > max_chars {
+        lines.push_str(" ...[truncated]");
+    }
+
+    lines
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn segment(summary: &str, index: i32) -> ConversationSegment {
+        ConversationSegment {
+            id: format!("segment-{}", index),
+            conversation_id: "conversation-1".to_string(),
+            segment_index: index,
+            start_message_index: index * 10,
+            end_message_index: index * 10 + 9,
+            summary: summary.to_string(),
+            summary_tokens: 0,
+            created_at: 0,
+        }
+    }
+
+    #[test]
+    fn sliding_window_summaries_render_as_runtime_context() {
+        let global = GlobalSummary {
+            id: "global-1".to_string(),
+            conversation_id: "conversation-1".to_string(),
+            summary: "global facts".to_string(),
+            summary_tokens: 0,
+            covers_up_to_index: 9,
+            updated_at: 0,
+        };
+        let segments = VecDeque::from(vec![segment("recent activity", 1)]);
+
+        let rendered = render_summary_context(Some(&global), &segments);
+        assert!(rendered.contains("[LongTermMemory]"));
+        assert!(rendered.contains("global facts"));
+        assert!(rendered.contains("[RecentActivitySummary]"));
+        assert!(rendered.contains("recent activity"));
+    }
+
+    #[test]
+    fn build_context_does_not_append_summaries_to_system_prompt() {
+        let messages = build_context_messages(
+            "STATIC_RULES",
+            &VecDeque::from(vec![ChatMessage::user("recent user message")]),
+        );
+
+        assert_eq!(messages[0].role, "system");
+        assert_eq!(messages[0].content, "STATIC_RULES");
+        assert!(!messages[0].content.contains("LONG-TERM MEMORY"));
+        assert!(!messages[0].content.contains("RECENT ACTIVITY SUMMARY"));
+        assert_eq!(messages[1].role, "user");
+    }
+
+    #[test]
+    fn token_threshold_summary_keeps_at_least_one_message_summarizable() {
+        assert_eq!(segment_keep_count(1, 20, true), 0);
+        assert_eq!(segment_keep_count(7, 20, true), 6);
+        assert_eq!(segment_keep_count(7, 20, false), 7);
+        assert_eq!(segment_keep_count(25, 20, true), 10);
+    }
+}

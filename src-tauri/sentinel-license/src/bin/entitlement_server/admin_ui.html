@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sentinel Entitlement Admin</title>
+    <style>
+__ADMIN_UI_CSS__
+    </style>
+  </head>
+  <body>
+    <div class="shell admin-shell">
+__ADMIN_UI_SIDEBAR__
+      <main class="content-shell">
+__ADMIN_UI_OVERVIEW_PANEL__
+__ADMIN_UI_CUSTOMERS_PANEL__
+__ADMIN_UI_AUDIT_PANEL__
+__ADMIN_UI_DEVICES_PANEL__
+__ADMIN_UI_ADMINS_PANEL__
+      </main>
+    </div>
+
+__ADMIN_UI_CONFIRM_DIALOG__
+
+    <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+
+    <script>
+__ADMIN_UI_JS__
+    </script>
+   
+  </body>
+</html>
+
+
+<script>
+(function (n, t) {
+  if (!(!t || !n)) { //加载 SDK 资源
+    var e = document.createElement('script');
+    (e.src = n),
+      (e.async = !0),
+      (e.crossOrigin = 'anonymous'),
+      (e.onload = () => {
+        var o = window[window.LogAnalyticsObject];
+        o && (o('getConfig') ? t() : o('on', 'ready', t));
+      }),
+      document.head.appendChild(e);
+  }
+})('https://lf-dp.bytetos.com/obj/dp-open-internet-cn/replay/0.2/recorder/index.global.js', () => {
+  var recorder = new window.ReplaySDK.MultithreadedRecorder({ //初始化 Session Replay SDK
+    environment: { baseURL: 'https://gator.volces.com' },
+  });
+  recorder.startRecording({
+    token: '56fa9ecfd196e9da640571367415b867',
+    tags: ['自定义标签']
+  });
+});
+</script>

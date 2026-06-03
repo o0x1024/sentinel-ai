@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Sentinel Behavior Capture",
+  "description": "Capture browser behavior events and forward them to Sentinel's local bridge for logic analysis enhancement.",
+  "version": "0.1.1",
+  "action": {
+    "default_title": "Sentinel Behavior Capture",
+    "default_popup": "popup.html"
+  },
+  "permissions": [
+    "alarms",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": [
+    "<all_urls>",
+    "http://127.0.0.1:18931/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": ["<all_urls>"],
+      "js": ["page-shell-capture-main.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    }
+  ]
+}

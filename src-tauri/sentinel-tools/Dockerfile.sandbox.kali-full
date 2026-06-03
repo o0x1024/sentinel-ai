@@ -1,0 +1,290 @@
+# Sentinel AI Security Sandbox (Kali Full Version)
+# Complete Kali Linux security testing environment
+FROM kalilinux/kali-rolling
+
+# Prevent interactive prompts
+ENV DEBIAN_FRONTEND=noninteractive
+ENV LANG=C.UTF-8
+
+# Configure domestic mirror for faster downloads
+RUN echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm main contrib non-free non-free-firmware" > /etc/apt/sources.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian/ bookworm-updates main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/debian-security bookworm-security main contrib non-free non-free-firmware" >> /etc/apt/sources.list && \
+    echo "deb http://mirrors.tuna.tsinghua.edu.cn/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list.d/kali.list
+
+# Update and install Kali metapackages
+# This includes a comprehensive set of security tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    # Top 10 most popular tools
+    kali-tools-top10 \
+    # Web application testing
+    kali-tools-web \
+    # Information gathering
+    kali-tools-information-gathering \
+    # Vulnerability analysis
+    kali-tools-vulnerability \
+    # Password attacks
+    kali-tools-passwords \
+    # Wireless attacks
+    kali-tools-wireless \
+    # Exploitation tools
+    kali-tools-exploitation \
+    # Forensics tools
+    kali-tools-forensics \
+    # Reverse engineering
+    kali-tools-reverse-engineering \
+    # Sniffing and spoofing
+    kali-tools-sniffing-spoofing \
+    # Reporting tools
+    kali-tools-reporting \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+
+
+
+# Install additional development and CTF tools
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    wget \
+    git \
+    vim \
+    nano \
+    python3-pip \
+    python3-dev \
+    build-essential \
+    golang-go \
+    gcc \
+    g++ \
+    gdb \
+    gdb-multiarch \
+    gdbserver \
+    # CTF essential tools
+    netcat-traditional \
+    socat \
+    binwalk \
+    foremost \
+    exiftool \
+    steghide \
+    stegseek \
+    file \
+    binutils \
+    xxd \
+    hexedit \
+    radare2 \
+    hashcat \
+    john \
+    hydra \
+    aircrack-ng \
+    # Network analysis
+    wireshark \
+    tshark \
+    tcpdump \
+    # Reverse engineering
+    ltrace \
+    strace \
+    valgrind \
+    # Forensics
+    autopsy \
+    sleuthkit \
+    # Crypto tools
+    openssl \
+    # Binary analysis tools
+    checksec \
+    patchelf \
+    upx-ucl \
+    # Web vulnerability discovery
+    sqlmap \
+    wfuzz \
+    dirb \
+    nikto \
+    wpscan \
+    # Vulnerability fixing tools
+    cppcheck \
+    flawfinder \
+    # Emergency response tools
+    chkrootkit \
+    rkhunter \
+    logwatch \
+    logcheck \
+    goaccess \
+    # System monitoring
+    htop \
+    iotop \
+    # Network tools
+    iputils-ping \
+    openssh-client \
+    sshpass \
+    dnsutils \
+    traceroute \
+    whois \
+    net-tools \
+    iproute2 \
+    # Exploit database
+    exploitdb \
+    # Additional utilities (keep qemu-user-static for emulation, drop qemu-user to avoid version conflicts)
+    qemu-user-static \
+    # Patch and diff tools
+    patch \
+    diffutils \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Install Node.js (from NodeSource)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && \
+    apt-get install -y --no-install-recommends nodejs && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+# Install PHP and extensions for CTF
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    php \
+    php-cli \
+    php-curl \
+    php-gd \
+    php-json \
+    php-mbstring \
+    php-xml \
+    php-zip \
+    php-mysql \
+    php-pgsql \
+    php-sqlite3 \
+    php-bcmath \
+    php-gmp \
+    php-soap \
+    php-xdebug \
+    composer \
+    # Ruby for one_gadget and other tools
+    ruby \
+    ruby-dev \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/* && \
+    gem install one_gadget seccomp-tools 2>/dev/null || true
+
+# Install additional Python security and CTF tools
+# Note: use --ignore-installed ruamel.yaml.clib to avoid trying to uninstall Debian's system package
+RUN pip3 install --no-cache-dir --break-system-packages --ignore-installed ruamel.yaml.clib \
+    requests \
+    beautifulsoup4 \
+    paramiko \
+    pwntools \
+    scapy \
+    impacket \
+    pycryptodome \
+    pycrypto \
+    gmpy2 \
+    z3-solver \
+    ropgadget \
+    ropper \
+    angr \
+    capstone \
+    keystone-engine \
+    unicorn \
+    r2pipe \
+    pillow \
+    numpy \
+    scipy \
+    sympy \
+    yara-python \
+    volatility3 \
+    frida \
+    frida-tools \
+    semgrep \
+    bandit \
+    safety \
+    || pip3 install --no-cache-dir --break-system-packages --ignore-installed ruamel.yaml.clib \
+    requests \
+    beautifulsoup4 \
+    paramiko \
+    pwntools \
+    scapy \
+    pycryptodome \
+    gmpy2 \
+    z3-solver \
+    ropgadget \
+    ropper \
+    pillow \
+    numpy \
+    semgrep \
+    bandit
+
+# Install Node.js security and CTF tools
+RUN npm install -g \
+    retire \
+    eslint \
+    snyk \
+    jwt-cracker \
+    jwt-cli \
+    crypto-js \
+    node-forge \
+    stegcloak \
+    || true; \
+    npm cache clean --force || true; \
+    rm -rf /root/.npm || true
+
+# Install PHP security and CTF tools via Composer
+# Note: we skip modifying /home/sandbox/.bashrc here because the sandbox user is created later
+RUN composer global require \
+    phpunit/phpunit \
+    squizlabs/php_codesniffer \
+    vimeo/psalm \
+    phpstan/phpstan \
+    friendsofphp/php-cs-fixer \
+    || true; \
+    composer clear-cache || true; \
+    rm -rf /root/.composer/cache || true
+
+# Install additional Go tools for security and CTF
+RUN export GOPATH=/tmp/go && \
+    go install github.com/ffuf/ffuf/v2@latest && \
+    go install github.com/projectdiscovery/nuclei/v3/cmd/nuclei@latest && \
+    go install github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest && \
+    go install github.com/projectdiscovery/httpx/cmd/httpx@latest && \
+    go install github.com/projectdiscovery/katana/cmd/katana@latest && \
+    go install github.com/projectdiscovery/naabu/v2/cmd/naabu@latest && \
+    go install github.com/tomnomnom/waybackurls@latest && \
+    go install github.com/tomnomnom/gf@latest && \
+    go install github.com/tomnomnom/httprobe@latest && \
+    go install github.com/lc/gau/v2/cmd/gau@latest && \
+    go install github.com/OJ/gobuster/v3@latest && \
+    # Web vulnerability discovery tools
+    go install github.com/lc/subjs@latest && \
+    go install github.com/hahwul/dalfox/v2@latest && \
+    go install github.com/projectdiscovery/notify/cmd/notify@latest && \
+    go install github.com/projectdiscovery/interactsh/cmd/interactsh-client@latest && \
+    # Binary analysis tools
+    go install github.com/slimtoolkit/slim@latest && \
+    mv /tmp/go/bin/* /usr/local/bin/ 2>/dev/null || true && \
+    rm -rf /tmp/go
+
+# Install additional CTF tools and frameworks from GitHub
+RUN mkdir -p /opt/payloads && \
+    git clone --depth 1 https://github.com/Gallopsled/pwntools-tutorial /opt/pwntools-tutorial 2>/dev/null || true && \
+    git clone --depth 1 https://github.com/secdev/scapy /opt/scapy 2>/dev/null || true && \
+    git clone --depth 1 https://github.com/pwntester/ysoserial.net /opt/ysoserial 2>/dev/null || true && \
+    git clone --depth 1 https://github.com/payloadbox/sql-injection-payload-list /opt/payloads/sqli 2>/dev/null || true && \
+    git clone --depth 1 https://github.com/payloadbox/xss-payload-list /opt/payloads/xss 2>/dev/null || true && \
+    git clone --depth 1 https://github.com/danielmiessler/SecLists /opt/SecLists 2>/dev/null || true && \
+    # Binary analysis tools
+    git clone --depth 1 https://github.com/sashs/Ropper /opt/Ropper 2>/dev/null || true && \
+    git clone --depth 1 https://github.com/securecodewarrior/secure-coding-exercises /opt/secure-coding 2>/dev/null || true && \
+    # Emergency response tools
+    git clone --depth 1 https://github.com/volatilityfoundation/volatility /opt/volatility-legacy 2>/dev/null || true && \
+    # Strip git metadata from cloned repositories to save space
+    find /opt -name ".git" -type d -prune -exec rm -rf '{}' +
+
+# Remove documentation and man pages to reduce image size
+RUN rm -rf /usr/share/doc/* /usr/share/man/* /usr/share/info/*
+
+# Create non-root user for execution
+RUN mkdir -p /workspace 
+
+ENV TERM=xterm-256color
+# Set working directory
+WORKDIR /workspace
+
+# Switch to non-root user
+USER root
+
+# Default command
+CMD ["/bin/bash"]

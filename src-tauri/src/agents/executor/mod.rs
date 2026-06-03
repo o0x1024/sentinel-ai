@@ -1,0 +1,253 @@
+//! Agent executor - entrypoint and orchestration.
+
+use anyhow::Result;
+use std::sync::Arc;
+use tauri::{AppHandle, Manager};
+
+use sentinel_db::Database;
+use sentinel_llm::LlmConfig;
+use sentinel_tools::buildin_tools::set_tool_search_context_provider;
+use sentinel_tools::{get_tool_server, mcp_adapter};
+
+use crate::agents::tenth_man::TenthManConfig;
+use crate::agents::tool_router::ToolConfig;
+use crate::agents::DocumentAttachmentInfo;
+use crate::agents::{ContextEngineMode, ContextPolicy};
+use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
+
+use self::file_tool_state::clear_file_tool_state;
+use self::run_simple::execute_agent_simple;
+use self::run_with_tools::execute_agent_with_tools;
+use self::tool_bias::build_tool_search_runtime_context;
+
+mod browser_shell_frame_compactor;
+mod browser_shell_handler;
+mod context_compaction;
+mod context_pressure;
+mod file_tool_state;
+mod final_review;
+mod http_request_override;
+pub mod message_store;
+mod model_context_tool;
+mod outcome;
+mod question_override;
+pub mod run_simple;
+pub mod run_with_tools;
+mod run_with_tools_support;
+mod shell_override;
+mod skill_loaded_events;
+mod team_runtime_log_context;
+mod tenth_man_hypothesis;
+mod terminal_session_store;
+mod tool_activation_events;
+mod tool_bias;
+pub mod tool_exec;
+mod tool_feedback;
+mod tool_progress;
+mod tool_protocol;
+mod tool_search_override;
+pub mod tool_trace_store;
+mod traffic_response_read_tool;
+pub mod types;
+pub mod utils;
+
+pub(crate) use browser_shell_handler::build_browser_shell_handler;
+pub use outcome::{
+    AgentToolProtocolSummary, AgentTurnOutcome, AgentTurnStopReason, AgentTurnToolSummary,
+};
+pub use tool_exec::{
+    execute_builtin_tool, execute_mcp_tool, execute_plugin_tool, execute_workflow_tool,
+};
+pub(crate) use tool_protocol::ToolProtocolTracker;
+pub use tool_trace_store::{
+    append_execution_tool_trace, clear_execution_tool_trace, next_execution_tool_trace_sequence,
+    take_execution_tool_trace,
+};
+pub use types::ToolCallRecord;
+
+/// Agent execution parameters.
+#[derive(Debug, Clone)]
+pub struct AgentExecuteParams {
+    pub execution_id: String,
+    pub conversation_id: Option<String>,
+    /// Cancellation-token generation for this concrete execution attempt.
+    /// When present, executor loops must stop if a newer generation replaces
+    /// the token for the same execution_id.
+    pub cancellation_generation: Option<u64>,
+    pub model: String,
+    pub system_prompt: String,
+    pub task: String,
+    pub active_browser_shell_direct_write_enabled: bool,
+    pub active_browser_shell_session_id: Option<String>,
+    pub active_terminal_session_fingerprint: Option<String>,
+    pub active_terminal_session_id: Option<String>,
+    pub working_directory: Option<String>,
+    pub provider_config_key: String,
+    pub rig_provider: String,
+    pub api_key: Option<String>,
+    pub api_base: Option<String>,
+    pub max_iterations: usize,
+    pub timeout_secs: u64,
+    pub tool_config: Option<ToolConfig>,
+    pub enable_tenth_man_rule: bool,
+    pub tenth_man_config: Option<TenthManConfig>,
+    pub document_attachments: Option<Vec<DocumentAttachmentInfo>>,
+    pub image_attachments: Option<serde_json::Value>,
+    pub referenced_traffic: Option<Vec<serde_json::Value>>,
+    pub persist_messages: bool,
+    pub subagent_run_id: Option<String>,
+    pub harness_run_id: Option<String>,
+    pub context_policy: Option<ContextPolicy>,
+    pub context_engine_mode: Option<ContextEngineMode>,
+    pub recursion_depth: usize,
+}
+
+impl AgentExecuteParams {
+    pub fn storage_conversation_id(&self) -> &str {
+        self.conversation_id
+            .as_deref()
+            .unwrap_or(self.execution_id.as_str())
+    }
+}
+
+/// Execute agent task and return only the final assistant text.
+pub async fn execute_agent(app_handle: &AppHandle, params: AgentExecuteParams) -> Result<String> {
+    execute_agent_turn(app_handle, params)
+        .await
+        .map(|outcome| outcome.final_response)
+}
+
+/// Execute agent task with structured turn protocol metadata.
+pub async fn execute_agent_turn(
+    app_handle: &AppHandle,
+    params: AgentExecuteParams,
+) -> Result<AgentTurnOutcome> {
+    let rig_provider = params.rig_provider.to_lowercase();
+    let execution_id = params.execution_id.clone();
+
+    tracing::info!(
+        "Executing agent - rig_provider: {}, model: {}, execution_id: {}, tools_enabled: {}, recursion_depth: {}",
+        rig_provider,
+        params.model,
+        params.execution_id,
+        params
+            .tool_config
+            .as_ref()
+            .map(|c| c.enabled)
+            .unwrap_or(false),
+        params.recursion_depth
+    );
+
+    let parent_context = crate::agents::subagent_executor::SubagentParentContext {
+        rig_provider: params.rig_provider.clone(),
+        model: params.model.clone(),
+        api_key: params.api_key.clone(),
+        api_base: params.api_base.clone(),
+        system_prompt: params.system_prompt.clone(),
+        active_browser_shell_direct_write_enabled: params.active_browser_shell_direct_write_enabled,
+        active_browser_shell_session_id: params.active_browser_shell_session_id.clone(),
+        active_terminal_session_fingerprint: params.active_terminal_session_fingerprint.clone(),
+        active_terminal_session_id: params.active_terminal_session_id.clone(),
+        working_directory: params.working_directory.clone(),
+        provider_config_key: params.provider_config_key.clone(),
+        tool_config: params.tool_config.clone().unwrap_or_default(),
+        max_iterations: params.max_iterations,
+        timeout_secs: params.timeout_secs,
+        task_context: params.task.clone(),
+        recursion_depth: params.recursion_depth,
+    };
+    crate::agents::subagent_executor::set_parent_context(execution_id.clone(), parent_context)
+        .await;
+
+    if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        if let Ok(client) = db.get_db() {
+            sentinel_memory::get_global_memory()
+                .set_database_client(client)
+                .await;
+        }
+
+        if let Ok(api_key) = db.get_config("ai", "tavily_api_key").await {
+            sentinel_tools::tool_server::set_tavily_api_key(api_key).await;
+        }
+    }
+
+    let tool_server = get_tool_server();
+    tool_server.init_builtin_tools().await;
+    let app_handle_for_tool_search = app_handle.clone();
+    set_tool_search_context_provider(Arc::new(move |execution_id: String| {
+        let app_handle = app_handle_for_tool_search.clone();
+        Box::pin(async move { build_tool_search_runtime_context(&app_handle, &execution_id).await })
+    }));
+
+    use sentinel_tools::buildin_tools::set_browser_shell_handler;
+    use sentinel_tools::buildin_tools::set_sops_app_handle;
+    use sentinel_tools::buildin_tools::tasks::set_tasks_app_handle;
+    set_browser_shell_handler(browser_shell_handler::build_browser_shell_handler(
+        app_handle.clone(),
+    ))
+    .await;
+    set_sops_app_handle(app_handle.clone()).await;
+    set_tasks_app_handle(app_handle.clone()).await;
+
+    use crate::agents::tenth_man_executor;
+    let storage_conversation_id = params.storage_conversation_id().to_string();
+
+    let mut tenth_man_llm_config = LlmConfig::new(&rig_provider, &params.model)
+        .with_rig_provider(&rig_provider)
+        .with_conversation_id(&storage_conversation_id);
+    if params.timeout_secs == 0 {
+        tenth_man_llm_config = tenth_man_llm_config.without_timeout();
+    } else {
+        tenth_man_llm_config = tenth_man_llm_config.with_timeout(params.timeout_secs);
+    }
+
+    if let Some(ref api_key) = params.api_key {
+        tenth_man_llm_config = tenth_man_llm_config.with_api_key(api_key);
+    }
+    if let Some(ref api_base) = params.api_base {
+        tenth_man_llm_config = tenth_man_llm_config.with_base_url(api_base);
+    }
+
+    if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>() {
+        tenth_man_llm_config =
+            apply_generation_settings_from_db(db.as_ref(), tenth_man_llm_config).await;
+    }
+
+    tenth_man_executor::set_tenth_man_config(params.execution_id.clone(), tenth_man_llm_config)
+        .await;
+    tenth_man_executor::set_task_context(
+        params.execution_id.clone(),
+        params.task.clone(),
+        storage_conversation_id,
+    )
+    .await;
+
+    tracing::info!(
+        "Tenth Man initialized for execution_id: {} (rule_enabled: {})",
+        params.execution_id,
+        params.enable_tenth_man_rule
+    );
+
+    let tool_config = params.tool_config.clone().unwrap_or_default();
+
+    let result = if tool_config.enabled {
+        tracing::info!("Refreshing MCP tools before execution...");
+        mcp_adapter::refresh_mcp_tools(&tool_server).await;
+
+        let registered_tools = tool_server.list_tools().await;
+        tracing::info!(
+            "ToolServer has {} registered tools: {:?}",
+            registered_tools.len(),
+            registered_tools.iter().map(|t| &t.name).collect::<Vec<_>>()
+        );
+
+        execute_agent_with_tools(app_handle, params, &tool_server).await
+    } else {
+        execute_agent_simple(app_handle, params).await
+    };
+
+    crate::agents::subagent_executor::clear_parent_context(&execution_id).await;
+    clear_file_tool_state(&execution_id).await;
+
+    result
+}

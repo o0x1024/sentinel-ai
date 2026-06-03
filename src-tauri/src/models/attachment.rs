@@ -1,0 +1,365 @@
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use serde::{Deserialize, Serialize};
+
+/// 图片媒体类型
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageMediaType {
+    JPEG,
+    PNG,
+    GIF,
+    WEBP,
+}
+
+impl ImageMediaType {
+    /// 从文件扩展名推断媒体类型
+    pub fn from_extension(ext: &str) -> Option<Self> {
+        match ext.to_lowercase().as_str() {
+            "jpg" | "jpeg" => Some(ImageMediaType::JPEG),
+            "png" => Some(ImageMediaType::PNG),
+            "gif" => Some(ImageMediaType::GIF),
+            "webp" => Some(ImageMediaType::WEBP),
+            _ => None,
+        }
+    }
+
+    /// 获取 MIME 类型字符串
+    pub fn to_mime_type(&self) -> &'static str {
+        match self {
+            ImageMediaType::JPEG => "image/jpeg",
+            ImageMediaType::PNG => "image/png",
+            ImageMediaType::GIF => "image/gif",
+            ImageMediaType::WEBP => "image/webp",
+        }
+    }
+}
+
+/// 文档源类型（与 Rig 兼容）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum DocumentSourceKind {
+    Base64 { data: String },
+    Url { url: String },
+}
+
+impl DocumentSourceKind {
+    /// 创建 base64 类型的文档源
+    pub fn base64(data: &str) -> Self {
+        DocumentSourceKind::Base64 {
+            data: data.to_string(),
+        }
+    }
+
+    /// 创建 URL 类型的文档源
+    pub fn url(url: &str) -> Self {
+        DocumentSourceKind::Url {
+            url: url.to_string(),
+        }
+    }
+}
+
+/// 图片附件（与 Rig Image 结构兼容）
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageAttachment {
+    /// 图片数据源（base64 或 URL）
+    pub data: DocumentSourceKind,
+    /// 媒体类型
+    pub media_type: Option<ImageMediaType>,
+    /// 文件名（可选）
+    pub filename: Option<String>,
+    /// Local source path (for local OCR only; must NOT be sent to LLM or persisted)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    /// 图片详细描述级别（low, high, auto）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
+impl ImageAttachment {
+    /// 从字节数据创建图片附件
+    pub fn from_bytes(bytes: &[u8], media_type: ImageMediaType, filename: Option<String>) -> Self {
+        let base64_data = BASE64_STANDARD.encode(bytes);
+        Self {
+            data: DocumentSourceKind::base64(&base64_data),
+            media_type: Some(media_type),
+            filename,
+            source_path: None,
+            detail: None,
+        }
+    }
+
+    /// 从 base64 字符串创建图片附件
+    pub fn from_base64(
+        base64_data: String,
+        media_type: ImageMediaType,
+        filename: Option<String>,
+    ) -> Self {
+        Self {
+            data: DocumentSourceKind::base64(&base64_data),
+            media_type: Some(media_type),
+            filename,
+            source_path: None,
+            detail: None,
+        }
+    }
+
+    /// 从 URL 创建图片附件
+    pub fn from_url(url: String, media_type: Option<ImageMediaType>) -> Self {
+        Self {
+            data: DocumentSourceKind::url(&url),
+            media_type,
+            filename: None,
+            source_path: None,
+            detail: None,
+        }
+    }
+
+    /// 设置详细级别
+    pub fn with_detail(mut self, detail: &str) -> Self {
+        self.detail = Some(detail.to_string());
+        self
+    }
+}
+
+/// 文档处理模式
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentProcessingMode {
+    /// 内容模式：提取文本发送给 LLM
+    Content,
+    /// 安全模式：在 Docker 中用安全工具分析
+    Security,
+}
+
+/// 文档附件状态
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentAttachmentStatus {
+    /// 等待处理
+    Pending,
+    /// 处理中
+    Processing,
+    /// 已就绪
+    Ready,
+    /// 处理失败
+    Failed,
+}
+
+/// 文档附件
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DocumentAttachment {
+    /// 唯一标识
+    pub id: String,
+    /// 原始文件名
+    pub original_filename: String,
+    /// 原始文件路径（宿主机）
+    pub original_path: String,
+    /// 文件大小（字节）
+    pub file_size: u64,
+    /// MIME 类型
+    pub mime_type: String,
+    /// 处理模式
+    pub processing_mode: DocumentProcessingMode,
+    /// 处理状态
+    pub status: DocumentAttachmentStatus,
+    /// 提取的文本内容（内容模式）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extracted_text: Option<String>,
+    /// 容器内路径（安全模式）
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub container_path: Option<String>,
+    /// 提取方法
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub extraction_method: Option<String>,
+    /// 错误信息
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_message: Option<String>,
+}
+
+impl DocumentAttachment {
+    /// 常见文档类型（用于 UI 提示）
+    pub const SUPPORTED_EXTENSIONS: &'static [&'static str] = &[
+        "docx", "doc", "xlsx", "xls", "pptx", "ppt", "pdf", "txt", "md", "rtf", "eml", "msg",
+        "zip", "rar", "7z", "tar", "gz", "json", "xml", "csv", "js", "ts", "py", "java", "c",
+        "cpp", "h", "rs", "go", "rb", "php", "sh", "bash", "zsh", "sql", "yaml", "yml", "toml",
+        "ini", "conf", "log", "html", "htm", "css",
+    ];
+
+    /// 检查是否是支持的文档类型（现在接受所有类型）
+    pub fn is_supported_extension(_ext: &str) -> bool {
+        // 接受所有文件类型，未知类型作为文本处理
+        true
+    }
+
+    /// 从扩展名推断 MIME 类型
+    pub fn mime_type_from_extension(ext: &str) -> &'static str {
+        match ext.to_lowercase().as_str() {
+            // Office 文档
+            "docx" => "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "doc" => "application/msword",
+            "xlsx" => "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            "xls" => "application/vnd.ms-excel",
+            "pptx" => "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            "ppt" => "application/vnd.ms-powerpoint",
+            "pdf" => "application/pdf",
+            "rtf" => "application/rtf",
+            // 邮件
+            "eml" => "message/rfc822",
+            "msg" => "application/vnd.ms-outlook",
+            // 文本类
+            "txt" => "text/plain",
+            "md" => "text/markdown",
+            "json" => "application/json",
+            "xml" => "application/xml",
+            "csv" => "text/csv",
+            "html" | "htm" => "text/html",
+            "css" => "text/css",
+            // 代码文件
+            "js" | "jsx" => "text/javascript",
+            "ts" | "tsx" => "text/typescript",
+            "py" => "text/x-python",
+            "java" => "text/x-java",
+            "c" | "h" => "text/x-c",
+            "cpp" | "hpp" | "cc" | "cxx" => "text/x-c++",
+            "rs" => "text/x-rust",
+            "go" => "text/x-go",
+            "rb" => "text/x-ruby",
+            "php" => "text/x-php",
+            "sh" | "bash" | "zsh" => "text/x-shellscript",
+            "sql" => "text/x-sql",
+            "yaml" | "yml" => "text/yaml",
+            "toml" => "text/x-toml",
+            "ini" | "conf" | "cfg" => "text/plain",
+            "log" => "text/plain",
+            // 压缩文件
+            "zip" => "application/zip",
+            "rar" => "application/x-rar-compressed",
+            "7z" => "application/x-7z-compressed",
+            "tar" => "application/x-tar",
+            "gz" => "application/gzip",
+            // 未知类型默认作为文本处理
+            _ => "text/plain",
+        }
+    }
+}
+
+/// 消息附件类型
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum MessageAttachment {
+    /// 图片附件
+    Image(ImageAttachment),
+    /// 文档附件
+    Document(DocumentAttachment),
+    /// 文件附件（遗留，保持兼容）
+    File {
+        filename: String,
+        data: String, // base64
+        mime_type: String,
+    },
+}
+
+impl MessageAttachment {
+    /// 判断是否为图片附件
+    pub fn is_image(&self) -> bool {
+        matches!(self, MessageAttachment::Image(_))
+    }
+
+    /// 判断是否为文档附件
+    pub fn is_document(&self) -> bool {
+        matches!(self, MessageAttachment::Document(_))
+    }
+
+    /// 获取图片附件
+    pub fn as_image(&self) -> Option<&ImageAttachment> {
+        match self {
+            MessageAttachment::Image(img) => Some(img),
+            _ => None,
+        }
+    }
+
+    /// 获取文档附件
+    pub fn as_document(&self) -> Option<&DocumentAttachment> {
+        match self {
+            MessageAttachment::Document(doc) => Some(doc),
+            _ => None,
+        }
+    }
+}
+
+/// 从文件路径读取图片并创建附件
+pub async fn load_image_from_path(file_path: &str) -> anyhow::Result<ImageAttachment> {
+    use std::path::Path;
+
+    let path = Path::new(file_path);
+
+    // 获取文件扩展名
+    let extension = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .ok_or_else(|| anyhow::anyhow!("无法获取文件扩展名"))?;
+
+    // 推断媒体类型
+    let media_type = ImageMediaType::from_extension(extension)
+        .ok_or_else(|| anyhow::anyhow!("不支持的图片格式: {}", extension))?;
+
+    // 读取文件内容
+    let bytes = tokio::fs::read(file_path).await?;
+
+    // 获取文件名
+    let filename = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .map(|s| s.to_string());
+
+    let mut att = ImageAttachment::from_bytes(&bytes, media_type, filename);
+    att.source_path = Some(file_path.to_string());
+    Ok(att)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_image_media_type_from_extension() {
+        assert_eq!(
+            ImageMediaType::from_extension("jpg"),
+            Some(ImageMediaType::JPEG)
+        );
+        assert_eq!(
+            ImageMediaType::from_extension("PNG"),
+            Some(ImageMediaType::PNG)
+        );
+        assert_eq!(
+            ImageMediaType::from_extension("gif"),
+            Some(ImageMediaType::GIF)
+        );
+        assert_eq!(ImageMediaType::from_extension("txt"), None);
+    }
+
+    #[test]
+    fn test_image_attachment_from_base64() {
+        let attachment = ImageAttachment::from_base64(
+            "iVBORw0KGgoAAAANS...".to_string(),
+            ImageMediaType::PNG,
+            Some("test.png".to_string()),
+        );
+
+        assert!(matches!(attachment.data, DocumentSourceKind::Base64 { .. }));
+        assert_eq!(attachment.media_type, Some(ImageMediaType::PNG));
+        assert_eq!(attachment.filename, Some("test.png".to_string()));
+    }
+
+    #[test]
+    fn test_message_attachment_is_image() {
+        let img_attachment = ImageAttachment::from_url(
+            "https://example.com/image.jpg".to_string(),
+            Some(ImageMediaType::JPEG),
+        );
+        let attachment = MessageAttachment::Image(img_attachment);
+
+        assert!(attachment.is_image());
+        assert!(attachment.as_image().is_some());
+    }
+}

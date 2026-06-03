@@ -1,0 +1,588 @@
+<template>
+  <Teleport to="body">
+    <div class="modal modal-open">
+      <div class="modal-box max-w-6xl w-11/12 h-[85vh] p-0 flex flex-col overflow-hidden">
+      <!-- Header -->
+      <div class="p-4 border-b flex items-center justify-between bg-base-200/50">
+        <h3 class="font-bold text-lg flex items-center gap-2">
+          <i class="fas fa-user-tie text-primary"></i>
+          {{ t('roles.roleManagement') }}
+        </h3>
+        <button @click="$emit('close')" class="btn btn-ghost btn-sm btn-circle">
+          <i class="fas fa-times"></i>
+        </button>
+      </div>
+
+      <div class="flex-1 flex overflow-hidden">
+        <!-- Left Sidebar: Role List -->
+        <div class="w-80 border-r flex flex-col bg-base-100">
+          <div class="p-4 space-y-4 border-b">
+            <div class="relative">
+              <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-base-content/40"></i>
+              <input 
+                v-model="searchQuery"
+                type="text" 
+                :placeholder="t('common.search')" 
+                class="input input-bordered input-sm w-full pl-9"
+              />
+            </div>
+            <button @click="startCreate" class="btn btn-primary btn-sm w-full gap-2">
+              <i class="fas fa-plus"></i>
+              {{ t('roles.newRole') }}
+            </button>
+            <button @click="startAiGenerate" class="btn btn-outline btn-primary btn-sm w-full gap-2">
+              <i class="fas fa-magic text-xs"></i>
+              {{ t('roles.aiGenerate') }}
+            </button>
+          </div>
+
+          <div class="flex-1 overflow-y-auto p-2 space-y-2">
+            <div v-if="isLoading" class="flex justify-center py-8">
+              <span class="loading loading-spinner loading-md"></span>
+            </div>
+            
+            <template v-else>
+              <div 
+                v-for="role in filteredRoles" 
+                :key="role.id"
+                @click="editRole(role)"
+                class="card bg-base-100 border transition-all cursor-pointer hover:bg-base-200"
+                :class="editingRole?.id === role.id ? 'border-primary bg-primary/5 shadow-sm' : 'border-base-300'"
+              >
+                <div class="p-3">
+                  <div class="flex items-start justify-between gap-2">
+                    <div class="flex-1 min-w-0">
+                      <div class="flex items-center gap-2 mb-1">
+                        <span v-if="role.is_system" class="badge badge-ghost badge-xs shrink-0">System</span>
+                        <h5 class="font-medium text-sm truncate">{{ role.title }}</h5>
+                      </div>
+                      <p class="text-xs text-base-content/60 line-clamp-1">{{ role.description }}</p>
+                    </div>
+                    <button 
+                      v-if="!role.is_system"
+                      @click.stop="confirmDeleteRole(role)" 
+                      class="btn btn-ghost btn-xs text-error p-0 h-6 w-6 min-h-0 opacity-0 group-hover:opacity-100"
+                    >
+                      <i class="fas fa-trash text-[10px]"></i>
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="filteredRoles.length === 0" class="text-center py-12 text-base-content/40">
+                <i class="fas fa-folder-open text-4xl mb-3 opacity-20"></i>
+                <p class="text-sm">{{ t('common.noMore') }}</p>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <!-- Right Content -->
+        <div class="flex-1 flex flex-col overflow-hidden bg-base-200/20">
+          <!-- AI Generation Form -->
+          <div v-if="showAiGenerateForm" class="flex-1 flex flex-col items-center justify-center p-8">
+            <div class="max-w-2xl w-full bg-base-100 rounded-2xl shadow-xl border border-base-300 p-8">
+              <div class="flex items-center gap-3 mb-6">
+                <div class="w-12 h-12 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                  <i class="fas fa-magic text-2xl"></i>
+                </div>
+                <div>
+                  <h3 class="text-xl font-bold">{{ t('roles.aiGenerate') }}</h3>
+                  <p class="text-sm text-base-content/60">{{ t('roles.aiInputHint') }}</p>
+                </div>
+              </div>
+
+              <div class="form-control w-full mb-6">
+                <textarea 
+                  v-model="aiPrompt"
+                  class="textarea textarea-bordered h-40 w-full focus:textarea-primary transition-all text-base leading-relaxed"
+                  :placeholder="t('roles.aiInputPlaceholder')"
+                  :disabled="isGenerating"
+                ></textarea>
+              </div>
+
+              <div class="flex justify-end gap-3">
+                <button 
+                  @click="showAiGenerateForm = false" 
+                  class="btn btn-ghost"
+                  :disabled="isGenerating"
+                >
+                  {{ t('common.cancel') }}
+                </button>
+                <button 
+                  @click="handleAiGenerate" 
+                  class="btn btn-primary min-w-[120px]"
+                  :disabled="isGenerating || !aiPrompt.trim()"
+                >
+                  <span v-if="isGenerating" class="loading loading-spinner loading-sm"></span>
+                  <i v-else class="fas fa-wand-magic-sparkles mr-2"></i>
+                  {{ isGenerating ? t('roles.generating') : t('roles.generate') }}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <div v-else-if="showCreateForm || editingRole" class="flex-1 flex flex-col overflow-hidden">
+            <!-- Toolbar -->
+            <div class="px-6 py-3 border-b bg-base-100 flex items-center justify-between shadow-sm z-10">
+              <div class="flex items-center gap-2">
+                <i class="fas" :class="editingRole ? 'fa-edit' : 'fa-plus'"></i>
+                <h4 class="font-semibold text-sm">
+                  {{ editingRole ? t('roles.editRole') : t('roles.newRole') }}
+                </h4>
+              </div>
+              <div class="flex gap-2">
+                <button 
+                  @click="cancelForm"
+                  class="btn btn-ghost btn-sm"
+                >
+                  {{ t('common.cancel') }}
+                </button>
+                <button 
+                  @click="handleSubmit" 
+                  class="btn btn-primary btn-sm gap-2"
+                  :disabled="isSubmitting"
+                >
+                  <span v-if="isSubmitting" class="loading loading-spinner loading-xs"></span>
+                  <i class="fas fa-save" v-else></i>
+                  {{ t('common.save') }}
+                </button>
+              </div>
+            </div>
+
+            <!-- Content Area -->
+            <div class="flex-1 overflow-y-auto p-6">
+              <div class="mx-auto w-full max-w-4xl">
+                <div class="flex flex-col gap-5">
+                  <div class="form-control">
+                    <label class="label pt-0">
+                      <span class="label-text font-bold text-base-content/70">{{ t('roles.roleTitle') }} <span class="text-error">*</span></span>
+                    </label>
+                    <input 
+                      v-model="formData.title"
+                      type="text" 
+                      :placeholder="t('roles.roleTitle')"
+                      class="input input-bordered w-full focus:input-primary transition-all"
+                      :class="{ 'input-error': formErrors.title }"
+                      required
+                    />
+                    <label v-if="formErrors.title" class="label">
+                      <span class="label-text-alt text-error">{{ formErrors.title }}</span>
+                    </label>
+                  </div>
+                  
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text font-bold text-base-content/70">{{ t('roles.roleDescription') }}</span>
+                    </label>
+                    <textarea 
+                      v-model="formData.description"
+                      :placeholder="t('roles.roleDescription')"
+                      class="textarea textarea-bordered h-24 w-full focus:textarea-primary transition-all resize-none"
+                      :class="{ 'textarea-error': formErrors.description }"
+                    ></textarea>
+                    <label v-if="formErrors.description" class="label">
+                      <span class="label-text-alt text-error">{{ formErrors.description }}</span>
+                    </label>
+                  </div>
+                  
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text font-bold text-base-content/70">Capabilities</span>
+                    </label>
+                    <input
+                      v-model="formData.capabilitiesText"
+                      type="text"
+                      placeholder="例如: team.manage, security.rules.manage"
+                      class="input input-bordered w-full focus:input-primary transition-all"
+                    />
+                    <label class="label">
+                      <span class="label-text-alt text-base-content/60">
+                        逗号分隔的能力标识。
+                      </span>
+                    </label>
+                    <div class="flex flex-wrap gap-2 mt-2">
+                      <button
+                        v-for="cap in CAPABILITY_TEMPLATES"
+                        :key="cap"
+                        type="button"
+                        class="btn btn-xs"
+                        :class="selectedCapabilities.includes(cap) ? 'btn-primary' : 'btn-outline'"
+                        @click="toggleCapability(cap)"
+                      >
+                        {{ cap }}
+                      </button>
+                    </div>
+                    <div v-if="selectedCapabilities.length > 0" class="flex flex-wrap gap-2 mt-3">
+                      <span
+                        v-for="cap in selectedCapabilities"
+                        :key="`selected-${cap}`"
+                        class="badge badge-primary badge-outline gap-1"
+                      >
+                        {{ cap }}
+                        <button type="button" class="btn btn-ghost btn-xs btn-circle" @click="removeCapability(cap)">
+                          <i class="fas fa-times text-[10px]"></i>
+                        </button>
+                      </span>
+                    </div>
+                  </div>
+
+                  <div class="form-control">
+                    <label class="label">
+                      <span class="label-text font-bold text-base-content/70">{{ t('roles.rolePrompt') }} <span class="text-error">*</span></span>
+                    </label>
+                    <textarea 
+                      v-model="formData.prompt"
+                      :placeholder="t('roles.rolePrompt')"
+                      class="textarea textarea-bordered w-full min-h-[360px] font-mono text-sm leading-relaxed focus:textarea-primary transition-all"
+                      :class="{ 'textarea-error': formErrors.prompt }"
+                      required
+                    ></textarea>
+                    <label v-if="formErrors.prompt" class="label">
+                      <span class="label-text-alt text-error">{{ formErrors.prompt }}</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Empty State -->
+          <div v-else class="flex-1 flex flex-col items-center justify-center text-base-content/20 p-12">
+            <div class="w-32 h-32 rounded-full bg-base-100 flex items-center justify-center mb-8 shadow-xl border border-base-300">
+              <i class="fas fa-user-tie text-6xl text-base-content/10"></i>
+            </div>
+            <h3 class="text-2xl font-black mb-3 text-base-content/40">Select a Role to Manage</h3>
+            <p class="max-w-xs text-center text-sm leading-relaxed">
+              Choose a role from the sidebar to view details, or create a new one to define a custom AI persona.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+      <div class="modal-backdrop" @click="$emit('close')"></div>
+    
+    <!-- Delete Confirmation -->
+      <div v-if="roleToDelete" class="modal modal-open">
+        <div class="modal-box max-w-sm">
+        <h3 class="font-bold text-lg text-error flex items-center gap-2">
+          <i class="fas fa-exclamation-triangle"></i>
+          {{ t('common.confirm') }}
+        </h3>
+        <p class="py-4">
+          {{ t('roles.deleteConfirm') }}
+          <br/>
+          <strong class="mt-2 block text-xl">{{ roleToDelete.title }}</strong>
+        </p>
+        <div class="modal-action">
+          <button @click="roleToDelete = null" class="btn btn-ghost">{{ t('common.cancel') }}</button>
+          <button 
+            @click="handleDeleteRole" 
+            class="btn btn-error"
+            :disabled="isDeleting"
+          >
+            <span v-if="isDeleting" class="loading loading-spinner loading-sm"></span>
+            {{ t('common.delete') }}
+          </button>
+        </div>
+        </div>
+        <div class="modal-backdrop" @click="roleToDelete = null"></div>
+      </div>
+    </div>
+  </Teleport>
+</template>
+
+<script setup lang="ts">
+import { ref, reactive, computed, onMounted } from 'vue'
+import { useRoleManagement } from '@/composables/useRoleManagement'
+import type { Role } from '@/types/role'
+import { useI18n } from 'vue-i18n'
+
+// Emits
+const emit = defineEmits(['close'])
+const { t } = useI18n()
+
+// 使用角色管理composable
+const {
+  roles,
+  isLoading,
+  createRole,
+  updateRole,
+  deleteRole,
+  loadRoles,
+  generateRole,
+} = useRoleManagement()
+
+// 搜索
+const searchQuery = ref('')
+
+// 过滤后的角色列表
+const filteredRoles = computed(() => {
+  if (!searchQuery.value.trim()) return roles.value
+  const query = searchQuery.value.toLowerCase()
+  return roles.value.filter(role => 
+    role.title.toLowerCase().includes(query) || 
+    role.description.toLowerCase().includes(query)
+  )
+})
+
+// 表单状态
+const showCreateForm = ref(false)
+const showAiGenerateForm = ref(false)
+const editingRole = ref<Role | null>(null)
+const isSubmitting = ref(false)
+const isDeleting = ref(false)
+const isGenerating = ref(false)
+const roleToDelete = ref<Role | null>(null)
+
+// AI 生成相关
+const aiPrompt = ref('')
+
+// 表单数据
+const formData = reactive({
+  title: '',
+  description: '',
+  prompt: '',
+  capabilitiesText: '',
+})
+
+const CAPABILITY_TEMPLATES: string[] = []
+
+// 表单错误
+const formErrors = reactive({
+  title: '',
+  description: '',
+  prompt: '',
+})
+
+// 验证表单
+const validateForm = () => {
+  formErrors.title = ''
+  formErrors.description = ''
+  formErrors.prompt = ''
+  
+  if (!formData.title.trim()) {
+    formErrors.title = t('common.validation.required')
+    return false
+  }
+  
+  if (formData.title.trim().length > 50) {
+    formErrors.title = t('common.validation.maxLength', { max: 50 })
+    return false
+  }
+  
+  if (!formData.prompt.trim()) {
+    formErrors.prompt = t('common.validation.required')
+    return false
+  }
+  
+  if (formData.prompt.trim().length > 20000) {
+    formErrors.prompt = t('common.validation.maxLength', { max: 20000 })
+    return false
+  }
+  
+  if (formData.description.trim().length > 500) {
+    formErrors.description = t('common.validation.maxLength', { max: 500 })
+    return false
+  }
+  
+  return true
+}
+
+// 重置表单
+const resetForm = () => {
+  formData.title = ''
+  formData.description = ''
+  formData.prompt = ''
+  formData.capabilitiesText = ''
+  formErrors.title = ''
+  formErrors.description = ''
+  formErrors.prompt = ''
+}
+
+const parseCapabilities = (input: string): string[] => {
+  const seen = new Set<string>()
+  return input
+    .split(',')
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0)
+    .filter((v) => {
+      const key = v.toLowerCase()
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
+}
+
+const selectedCapabilities = computed(() => parseCapabilities(formData.capabilitiesText))
+
+const toggleCapability = (capability: string) => {
+  const current = new Set(selectedCapabilities.value)
+  if (current.has(capability)) {
+    current.delete(capability)
+  } else {
+    current.add(capability)
+  }
+  formData.capabilitiesText = Array.from(current).join(', ')
+}
+
+const removeCapability = (capability: string) => {
+  const current = selectedCapabilities.value.filter((cap) => cap !== capability)
+  formData.capabilitiesText = current.join(', ')
+}
+
+// 编辑角色
+const editRole = (role: Role) => {
+  editingRole.value = role
+  formData.title = role.title
+  formData.description = role.description
+  formData.prompt = role.prompt
+  formData.capabilitiesText = (role.capabilities || []).join(', ')
+  showCreateForm.value = false
+  showAiGenerateForm.value = false
+}
+
+// 切换到创建模式
+const startCreate = () => {
+  editingRole.value = null
+  showCreateForm.value = true
+  showAiGenerateForm.value = false
+  resetForm()
+}
+
+// 切换到 AI 生成模式
+const startAiGenerate = () => {
+  editingRole.value = null
+  showCreateForm.value = false
+  showAiGenerateForm.value = true
+  aiPrompt.value = ''
+}
+
+// 处理 AI 生成
+const handleAiGenerate = async () => {
+  if (!aiPrompt.value.trim()) return
+  
+  isGenerating.value = true
+  try {
+    const generated = await generateRole(aiPrompt.value.trim())
+    formData.title = generated.title
+    formData.description = generated.description
+    formData.prompt = generated.prompt
+    formData.capabilitiesText = (generated.capabilities || []).join(', ')
+    showAiGenerateForm.value = false
+    showCreateForm.value = true
+  } catch (error) {
+    console.error('Failed to generate role:', error)
+  } finally {
+    isGenerating.value = false
+  }
+}
+
+// 取消表单
+const cancelForm = () => {
+  showCreateForm.value = false
+  editingRole.value = null
+  showAiGenerateForm.value = false
+  resetForm()
+}
+
+// 提交表单
+const handleSubmit = async () => {
+  if (!validateForm()) return
+  
+  isSubmitting.value = true
+  
+  try {
+    const capabilities = parseCapabilities(formData.capabilitiesText)
+    if (editingRole.value) {
+      // 更新角色
+      await updateRole({
+        id: editingRole.value.id,
+        title: formData.title.trim(),
+        description: formData.description.trim(),
+        prompt: formData.prompt.trim(),
+        capabilities,
+      })
+    } else {
+      // 创建角色
+      await createRole({
+        title: formData.title.trim(),
+        description: formData.description.trim(),
+        prompt: formData.prompt.trim(),
+        capabilities,
+      })
+    }
+    
+    cancelForm()
+  } catch (error) {
+    console.error('Failed to save role:', error)
+  } finally {
+    isSubmitting.value = false
+  }
+}
+
+// 确认删除角色
+const confirmDeleteRole = (role: Role) => {
+  roleToDelete.value = role
+}
+
+// 删除角色
+const handleDeleteRole = async () => {
+  if (!roleToDelete.value) return
+  
+  isDeleting.value = true
+  
+  try {
+    await deleteRole(roleToDelete.value.id)
+    if (editingRole.value?.id === roleToDelete.value.id) {
+      cancelForm()
+    }
+    roleToDelete.value = null
+  } catch (error) {
+    console.error('Failed to delete role:', error)
+  } finally {
+    isDeleting.value = false
+  }
+}
+
+onMounted(() => {
+  loadRoles()
+})
+</script>
+
+<style scoped>
+.line-clamp-1 {
+  display: -webkit-box;
+  -webkit-line-clamp: 1;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-clamp: 1;
+}
+
+.line-clamp-2 {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  line-clamp: 2;
+}
+
+/* 自定义滚动条样式，使其更细一点 */
+.overflow-y-auto::-webkit-scrollbar {
+  width: 4px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb {
+  background: hsl(var(--bc) / 0.1);
+  border-radius: 10px;
+}
+
+.overflow-y-auto::-webkit-scrollbar-thumb:hover {
+  background: hsl(var(--bc) / 0.2);
+}
+</style>

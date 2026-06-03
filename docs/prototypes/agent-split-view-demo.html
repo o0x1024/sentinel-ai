@@ -1,0 +1,564 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Multi-Agent Split View Demo</title>
+  <style>
+    :root {
+      --bg: #f5f7f2;
+      --bg-2: #edf2ea;
+      --panel: #ffffff;
+      --text: #10231d;
+      --muted: #5c6f68;
+      --line: #d2ddd8;
+      --accent: #0f766e;
+      --warn: #b45309;
+      --danger: #b91c1c;
+      --shadow: 0 12px 30px rgba(16, 35, 29, 0.08);
+      --radius: 16px;
+      --gap: 12px;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background:
+        radial-gradient(1200px 600px at -20% -20%, #dff5eb 0%, transparent 55%),
+        radial-gradient(1000px 500px at 120% -10%, #fef3d4 0%, transparent 55%),
+        linear-gradient(180deg, var(--bg), var(--bg-2));
+      color: var(--text);
+      font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+    }
+
+    .app {
+      height: 100vh;
+      display: grid;
+      grid-template-rows: 62px 1fr;
+    }
+
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px;
+      border-bottom: 1px solid var(--line);
+      background: rgba(255, 255, 255, 0.85);
+      backdrop-filter: blur(7px);
+    }
+
+    .topbar-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .brand {
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 0.2px;
+      color: #084c43;
+      background: #d7f4ef;
+    }
+
+    .timeline {
+      display: flex;
+      gap: 8px;
+      overflow: auto;
+      max-width: 72vw;
+      scrollbar-width: thin;
+    }
+
+    .event-chip {
+      border: 1px solid var(--line);
+      background: #fff;
+      border-radius: 999px;
+      padding: 6px 10px;
+      white-space: nowrap;
+      font-size: 12px;
+      color: #315047;
+    }
+
+    .event-chip.warn {
+      border-color: #f5d79f;
+      background: #fffaef;
+      color: #7f4f11;
+    }
+
+    .event-chip.err {
+      border-color: #f4b4b4;
+      background: #fff1f1;
+      color: #8f1a1a;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 280px 1fr;
+      min-height: 0;
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--line);
+      padding: 12px;
+      overflow: auto;
+      background: rgba(255, 255, 255, 0.74);
+    }
+
+    .sidebar h3 {
+      margin: 2px 0 12px;
+      font-size: 14px;
+      color: #37574d;
+    }
+
+    .agent-card {
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: var(--shadow);
+      margin-bottom: 10px;
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .agent-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .agent-name {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      display: inline-block;
+    }
+
+    .status {
+      font-size: 11px;
+      border-radius: 999px;
+      padding: 3px 7px;
+      border: 1px solid var(--line);
+      color: #46645b;
+    }
+
+    .meta {
+      font-size: 12px;
+      color: var(--muted);
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .main {
+      padding: 12px;
+      min-height: 0;
+      display: grid;
+      grid-template-rows: 40px 1fr;
+      gap: 10px;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+    }
+
+    .btn {
+      border: 1px solid #9ec9bf;
+      background: #edfbf7;
+      color: #0b5f56;
+      border-radius: 10px;
+      font-size: 12px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+
+    .btn.secondary {
+      border-color: var(--line);
+      background: #fff;
+      color: #2a453d;
+    }
+
+    .pane-wrap {
+      min-height: 0;
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: rgba(255, 255, 255, 0.68);
+      padding: 10px;
+      overflow: hidden;
+    }
+
+    .split {
+      display: flex;
+      min-height: 100%;
+      gap: 0;
+      user-select: none;
+    }
+
+    .pane {
+      min-width: 220px;
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: #fff;
+      display: grid;
+      grid-template-rows: 48px 1fr;
+      overflow: hidden;
+    }
+
+    .pane-head {
+      border-bottom: 1px solid var(--line);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px;
+      gap: 8px;
+      background: #f9fcfb;
+    }
+
+    .pane-head select {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 6px 8px;
+      font-size: 12px;
+      color: #2c463f;
+      min-width: 132px;
+      background: #fff;
+    }
+
+    .pane-msgs {
+      overflow: auto;
+      padding: 10px;
+      display: grid;
+      gap: 8px;
+      align-content: start;
+    }
+
+    .msg {
+      border-radius: 12px;
+      padding: 8px 10px;
+      border: 1px solid var(--line);
+      font-size: 12px;
+      line-height: 1.45;
+      color: #1d352f;
+      background: #fff;
+    }
+
+    .msg.tool {
+      border-left: 4px solid #0f766e;
+      background: #eefbf8;
+    }
+
+    .msg.status {
+      border-left: 4px solid #c08406;
+      background: #fff8e8;
+    }
+
+    .msg.stream::after {
+      content: "▍";
+      animation: pulse 1s infinite;
+      margin-left: 2px;
+      color: #0f766e;
+      font-weight: 700;
+    }
+
+    @keyframes pulse {
+      0%, 49% { opacity: 1; }
+      50%, 100% { opacity: 0; }
+    }
+
+    .divider {
+      width: 10px;
+      cursor: col-resize;
+      position: relative;
+      flex: 0 0 10px;
+    }
+
+    .divider::before {
+      content: "";
+      position: absolute;
+      left: 50%;
+      top: 10px;
+      bottom: 10px;
+      width: 2px;
+      border-radius: 999px;
+      transform: translateX(-50%);
+      background: #c2d7d0;
+    }
+
+    @media (max-width: 1040px) {
+      .layout { grid-template-columns: 1fr; }
+      .sidebar { display: none; }
+      .main { grid-template-rows: 40px 1fr; }
+      .pane { min-width: 100%; }
+      .divider { display: none; }
+      .split { overflow-x: auto; gap: 10px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <div class="topbar">
+      <div class="topbar-left">
+        <div class="brand">Team Run / Split View</div>
+        <div id="timeline" class="timeline"></div>
+      </div>
+      <div>
+        <button id="focusBtn" class="btn secondary">聚焦第一栏</button>
+      </div>
+    </div>
+
+    <div class="layout">
+      <aside class="sidebar" id="sidebar"></aside>
+      <main class="main">
+        <div class="controls">
+          <div style="font-size:12px;color:#446158;">并行观察建议: 2~3 栏，超过会降低可读性</div>
+          <div style="display:flex; gap:8px;">
+            <button id="addPaneBtn" class="btn">新增分栏</button>
+            <button id="removePaneBtn" class="btn secondary">移除最后分栏</button>
+          </div>
+        </div>
+        <div class="pane-wrap">
+          <div id="split" class="split"></div>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <script>
+    const agents = [
+      { id: "planner", name: "Planner", color: "#0f766e", status: "running", unread: 3, tokenRate: "21 tok/s" },
+      { id: "researcher", name: "Researcher", color: "#0369a1", status: "running", unread: 1, tokenRate: "17 tok/s" },
+      { id: "coder", name: "Coder", color: "#7c3aed", status: "running", unread: 5, tokenRate: "26 tok/s" },
+      { id: "reviewer", name: "Reviewer", color: "#b45309", status: "idle", unread: 0, tokenRate: "0 tok/s" }
+    ];
+
+    const messageStore = {
+      planner: [
+        { type: "status", text: "Task started · planning decomposition" },
+        { type: "assistant", text: "I am splitting the objective into 4 milestones." }
+      ],
+      researcher: [
+        { type: "tool", text: "tool_call: web.search('multi-agent event sourcing')" },
+        { type: "assistant", text: "Found 3 primary patterns for event sequencing." }
+      ],
+      coder: [
+        { type: "assistant", text: "Implementing event cursor and idempotent merge." },
+        { type: "tool", text: "tool_result: 12 files scanned, 4 mutation points." }
+      ],
+      reviewer: [{ type: "status", text: "Waiting for upstream artifacts." }]
+    };
+
+    const timeline = [
+      { level: "normal", text: "Run started 20:14:12" },
+      { level: "normal", text: "Planner -> 4 subtasks created" },
+      { level: "warn", text: "Researcher tool latency: 2.3s" },
+      { level: "normal", text: "Coder stream stable seq=281" }
+    ];
+
+    let panes = ["planner", "researcher", "coder"];
+    let widths = [34, 33, 33];
+    let focused = false;
+
+    function renderSidebar() {
+      const sidebar = document.getElementById("sidebar");
+      sidebar.innerHTML = "<h3>Agents</h3>" + agents.map(agent => `
+        <div class="agent-card">
+          <div class="agent-row">
+            <div class="agent-name">
+              <span class="dot" style="background:${agent.color}"></span>
+              <span>${agent.name}</span>
+            </div>
+            <span class="status">${agent.status}</span>
+          </div>
+          <div class="meta">
+            <span>Unread: ${agent.unread}</span>
+            <span>${agent.tokenRate}</span>
+          </div>
+        </div>
+      `).join("");
+    }
+
+    function renderTimeline() {
+      const node = document.getElementById("timeline");
+      node.innerHTML = timeline.map(item => `
+        <div class="event-chip ${item.level === "warn" ? "warn" : item.level === "err" ? "err" : ""}">
+          ${item.text}
+        </div>
+      `).join("");
+    }
+
+    function renderPanes() {
+      const split = document.getElementById("split");
+      const activePanes = focused ? [panes[0]] : panes.slice();
+      const activeWidths = focused ? [100] : widths.slice(0, activePanes.length);
+      split.innerHTML = "";
+
+      activePanes.forEach((agentId, idx) => {
+        const pane = document.createElement("section");
+        pane.className = "pane";
+        pane.style.flexBasis = `${activeWidths[idx]}%`;
+        pane.style.flexGrow = "0";
+        pane.style.flexShrink = "0";
+
+        const messages = (messageStore[agentId] || []).slice(-24);
+        const options = agents.map(a => `<option value="${a.id}" ${a.id === agentId ? "selected" : ""}>${a.name}</option>`).join("");
+
+        pane.innerHTML = `
+          <header class="pane-head">
+            <select data-pane="${idx}" class="agent-select">${options}</select>
+            <span style="font-size:11px;color:#537068;">stream: live</span>
+          </header>
+          <div class="pane-msgs">
+            ${messages.map(msg => `<div class="msg ${msg.type === "tool" ? "tool" : msg.type === "status" ? "status" : ""} ${msg.stream ? "stream" : ""}">${msg.text}</div>`).join("")}
+          </div>
+        `;
+
+        split.appendChild(pane);
+
+        if (!focused && idx < activePanes.length - 1) {
+          const divider = document.createElement("div");
+          divider.className = "divider";
+          divider.dataset.index = String(idx);
+          split.appendChild(divider);
+        }
+      });
+
+      document.querySelectorAll(".agent-select").forEach(el => {
+        el.addEventListener("change", (e) => {
+          const paneIndex = Number(e.target.dataset.pane);
+          panes[paneIndex] = e.target.value;
+          renderPanes();
+        });
+      });
+
+      setupDividers();
+      scrollToBottom();
+    }
+
+    function scrollToBottom() {
+      document.querySelectorAll(".pane-msgs").forEach(n => {
+        n.scrollTop = n.scrollHeight;
+      });
+    }
+
+    function setupDividers() {
+      document.querySelectorAll(".divider").forEach(divider => {
+        divider.onmousedown = (downEvent) => {
+          const i = Number(divider.dataset.index);
+          const container = document.getElementById("split");
+          const total = container.getBoundingClientRect().width;
+          const startX = downEvent.clientX;
+          const leftStart = widths[i];
+          const rightStart = widths[i + 1];
+          const minPct = (220 / total) * 100;
+
+          function onMove(moveEvent) {
+            const deltaPx = moveEvent.clientX - startX;
+            const deltaPct = (deltaPx / total) * 100;
+            let nextLeft = leftStart + deltaPct;
+            let nextRight = rightStart - deltaPct;
+            if (nextLeft < minPct || nextRight < minPct) return;
+            widths[i] = nextLeft;
+            widths[i + 1] = nextRight;
+            renderPanes();
+          }
+
+          function onUp() {
+            window.removeEventListener("mousemove", onMove);
+            window.removeEventListener("mouseup", onUp);
+          }
+
+          window.addEventListener("mousemove", onMove);
+          window.addEventListener("mouseup", onUp);
+        };
+      });
+    }
+
+    function pushTimeline(level, text) {
+      timeline.unshift({ level, text });
+      if (timeline.length > 8) timeline.pop();
+      renderTimeline();
+    }
+
+    function randomFrom(list) {
+      return list[Math.floor(Math.random() * list.length)];
+    }
+
+    function simulateStream() {
+      const id = randomFrom(["planner", "researcher", "coder"]);
+      const streamText = randomFrom([
+        "Updating dependency graph for downstream task.",
+        "Appending delta chunk to stream buffer.",
+        "Commit candidate generated for review.",
+        "Tool output normalized into artifact."
+      ]);
+      const list = messageStore[id];
+      list.push({ type: "assistant", text: streamText, stream: true });
+      if (list.length > 30) list.shift();
+      setTimeout(() => {
+        const last = list[list.length - 1];
+        if (last) last.stream = false;
+        renderPanes();
+      }, 900);
+      renderPanes();
+    }
+
+    function simulateToolEvent() {
+      const id = randomFrom(["researcher", "coder"]);
+      const list = messageStore[id];
+      list.push({ type: "tool", text: "tool_call: fetch_artifact('dep-output')" });
+      pushTimeline("normal", `${id} tool call started`);
+      renderPanes();
+      setTimeout(() => {
+        list.push({ type: "tool", text: "tool_result: success · 2.1 KB artifact merged" });
+        pushTimeline("normal", `${id} tool call completed`);
+        renderPanes();
+      }, 1300);
+    }
+
+    document.getElementById("addPaneBtn").addEventListener("click", () => {
+      if (focused) focused = false;
+      if (panes.length >= 3) return;
+      const next = agents.find(a => !panes.includes(a.id)) || agents[0];
+      panes.push(next.id);
+      widths = panes.length === 2 ? [50, 50] : [34, 33, 33];
+      renderPanes();
+    });
+
+    document.getElementById("removePaneBtn").addEventListener("click", () => {
+      if (panes.length <= 1) return;
+      panes.pop();
+      widths = panes.length === 2 ? [50, 50] : [100];
+      renderPanes();
+    });
+
+    document.getElementById("focusBtn").addEventListener("click", () => {
+      focused = !focused;
+      document.getElementById("focusBtn").textContent = focused ? "退出聚焦" : "聚焦第一栏";
+      renderPanes();
+    });
+
+    renderSidebar();
+    renderTimeline();
+    renderPanes();
+    setInterval(simulateStream, 1700);
+    setInterval(simulateToolEvent, 4300);
+  </script>
+</body>
+</html>

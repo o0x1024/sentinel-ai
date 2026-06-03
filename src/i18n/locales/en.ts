@@ -1,0 +1,601 @@
+import common from './common/en'
+import sidebar from './sidebar/en'
+import dashboard from './dashboard/en'
+import settings from './settings/en'
+import ai from './settings/ai/en'
+import rag from './settings/rag/en'
+import database from './settings/database/en'
+import scanTasks from './scanTasks/en'
+import vulnerabilities from './vulnerabilities/en'
+import tools from './tools/en'
+import assetManagement from './assetManagement/en'
+import assetTypes from './assetTypes/en'
+import riskLevels from './riskLevels/en'
+import assetStatuses from './assetStatuses/en'
+import aiChat from './aiChat/en'
+import positions from './positions/en'
+import language from './language/en'
+import projects from './projects/en'
+import dictionary from './dictionary/en'
+import mcp from './mcp/en'
+import roles from './roles/en'
+import scanSessions from './scanSessions/en'
+import agents from './agents/en'
+import trafficAnalysis from './trafficAnalysis/en'
+import ragManagement from './rag/en'
+import notifications from './notifications/en'
+import aiAssistant from './aiAssistant/en'
+import agent from './agent/en'
+import botConsole from './botConsole/en'
+import bugBountyPro from './bugBountyPro/en'
+import llmSecurity from './llmSecurity/en'
+
+// Import other modules as needed
+// For now, we'll include the basic structure and add more as we extract them
+
+export default {
+  common,
+  sidebar,
+  dashboard,
+  settings: {
+    ...settings,
+    ai,
+    rag,
+    database,
+  },
+  scanTasks,
+  vulnerabilities,
+  tools,
+  Tools: tools,
+  assetManagement,
+  assetTypes,
+  riskLevels,
+  assetStatuses,
+  aiChat,
+  positions,
+  language,
+  projects,
+  dictionary,
+  mcp,
+  roles,
+  scanSessions,
+  agents,
+  trafficAnalysis,
+  ragManagement,
+  notifications,
+  aiAssistant,
+  agent,
+  botConsole,
+  bugBountyPro,
+  llmSecurity,
+
+  cyberchef: {
+    operations: 'Operations',
+    searchPlaceholder: 'Search operations...',
+    recipe: 'Recipe',
+    clearRecipe: 'Clear Recipe',
+    bake: 'Bake!',
+    autoBake: 'Auto Bake',
+    input: 'Input',
+    chars: 'Chars',
+    clear: 'Clear',
+    inputPlaceholder: 'Enter data to process here...',
+    output: 'Output',
+    copy: 'Copy',
+    outputPlaceholder: 'Results will appear here in real time...',
+    emptyRecipe: 'Drag operations from the left into this area',
+    doubleClickHint: 'or double-click to add',
+    operationDisabled: 'Disabled'
+  },
+
+  // Top-level aliases for sidebar navigation
+  rag: {
+    title: 'RAG Management'
+  },
+  workflow: {
+    title: 'Workflow Studio'
+  },
+
+  // Security Center section
+  securityCenter: {
+    title: 'Security Center',
+    immersiveSidebar: {
+      title: 'Security Center Sidebar',
+      description: 'Switch between the workbench and vulnerabilities views in immersive mode.',
+      workbenchDescription: 'Review cases, evidence chains, and verification flow.',
+      vulnerabilitiesDescription: 'Browse findings, details, and related evidence.',
+      resize: 'Resize security center width',
+      minimize: 'Minimize security center',
+      restore: 'Restore security center',
+      minimizedHint: 'Minimized and ready to restore',
+    },
+    tabs: {
+      workbench: 'Security Workbench',
+      vulnerabilities: 'Vulnerabilities',
+      scanTasks: 'Scan Tasks',
+      llmSecurity: 'LLM Security',
+      assets: 'Assets',
+    },
+  },
+
+  // Placeholder for remaining sections that need to be extracted
+  // These will be added as we create the corresponding modules
+  agentCreator: {
+    title: 'Agent Creator',
+    createAgent: 'Create Agent',
+    editAgent: 'Edit Agent',
+    deleteAgent: 'Delete Agent',
+    agentName: 'Agent Name',
+    agentDescription: 'Agent Description',
+    agentType: 'Agent Type',
+    agentCapabilities: 'Agent Capabilities',
+    searchPlaceholder: 'Search agents...',
+    noAgents: 'No agents found',
+    totalAgents: 'Total Agents',
+
+    steps: {
+      basic: 'Basic Information',
+      capabilities: 'Capabilities',
+      tools: 'Tools',
+      code: 'Code',
+      deploy: 'Deploy'
+    },
+
+    basic: {
+      title: 'Basic Information',
+      name: 'Agent Name',
+      description: 'Agent Description',
+      type: 'Agent Type',
+      version: 'Agent Version',
+      author: 'Author',
+      tags: 'Tags'
+    },
+
+    capabilities: {
+      title: 'Agent Capabilities',
+      vulnerabilityScanning: 'Vulnerability Scanning',
+      penetrationTesting: 'Penetration Testing',
+      reconnaissance: 'Reconnaissance',
+      exploitation: 'Exploitation',
+      postExploitation: 'Post-Exploitation',
+      reporting: 'Reporting',
+      automation: 'Automation',
+      analysis: 'Analysis'
+    },
+
+    tools: {
+      title: 'Agent Tools',
+      availableTools: 'Available Tools',
+      selectedTools: 'Selected Tools',
+      toolCategories: 'Tool Categories',
+      searchPlaceholder: 'Search tools...',
+      noTools: 'No tools found',
+      totalTools: 'Total Tools',
+
+      categories: {
+        network: 'Network Tools',
+        web: 'Web Tools',
+        database: 'Database Tools',
+        system: 'System Tools',
+        exploitation: 'Exploitation Tools',
+        postExploitation: 'Post-Exploitation Tools',
+        reporting: 'Reporting Tools',
+        utility: 'Utility Tools'
+      }
+    },
+
+    code: {
+      title: 'Agent Code',
+      generateCode: 'Generate Code',
+      editCode: 'Edit Code',
+      saveCode: 'Save Code',
+      codeEditor: 'Code Editor',
+      syntaxHighlighting: 'Syntax Highlighting',
+      autoComplete: 'Auto Complete',
+      errorChecking: 'Error Checking'
+    },
+
+    deploy: {
+      title: 'Deploy Agent',
+      deployLocally: 'Deploy Locally',
+      deployRemotely: 'Deploy Remotely',
+      deployToCloud: 'Deploy to Cloud',
+      deploymentStatus: 'Deployment Status',
+      deploymentProgress: 'Deployment Progress',
+      deploymentSuccess: 'Deployment Success',
+      deploymentFailed: 'Deployment Failed'
+    },
+
+    navigation: {
+      previous: 'Previous',
+      next: 'Next',
+      finish: 'Finish',
+      cancel: 'Cancel'
+    },
+
+    messages: {
+      agentCreated: 'Agent created successfully',
+      agentUpdated: 'Agent updated successfully',
+      agentDeleted: 'Agent deleted successfully',
+      agentDeployed: 'Agent deployed successfully',
+      agentDeploymentFailed: 'Agent deployment failed'
+    }
+  },
+
+  // Plugins section
+  plugins: {
+    title: 'Plugin Management',
+    description: 'Manage and configure security testing plugins',
+    plugins: 'Plugins',
+    installedPlugins: 'Installed Plugins',
+    availablePlugins: 'Available Plugins',
+    pluginDetails: 'Plugin Details',
+    pluginName: 'Plugin Name',
+    pluginDescription: 'Plugin Description',
+    pluginVersion: 'Plugin Version',
+    pluginAuthor: 'Plugin Author',
+    pluginStatus: 'Plugin Status',
+    searchPlaceholder: 'Search plugins...',
+    allMainCategories: 'All Categories',
+    allSubCategories: 'All Subcategories',
+    noPlugins: 'No plugins found',
+    totalPlugins: 'Total Plugins',
+    allStatus: 'All',
+    noReviewPlugins: 'No plugins pending review',
+    allPlugins: 'All Plugins',
+    favorited: 'Favorited',
+    favorite: 'Favorite Plugin',
+    unfavorite: 'Unfavorite',
+    clearFilters: 'Clear Filters',
+    copyPlugin: 'Copy Plugin',
+    showing: 'Showing',
+    of: 'of',
+    items: 'items',
+    pageSize: 'Page Size',
+
+    review: {
+      title: 'Plugin Review',
+      pendingReview: 'Pending Review',
+      pending: 'Pending',
+      approved: 'Approved',
+      rejected: 'Rejected',
+      failed: 'Validation Failed',
+      reviewDetails: 'Review Details',
+      reviewComments: 'Review Comments',
+      submitReview: 'Submit Review'
+    },
+
+    categories: {
+      all: 'All',
+      traffic: 'Traffic',
+      agent: 'Agent',
+      trafficAnalysis: 'Traffic Analysis Plugins',
+      agents: 'Agent Tool Plugins',
+      bounty: 'Bug Bounty Plugins',
+      intruder: 'Intruder Plugins',
+      builtinTools: 'Built-in Tool Plugins',
+      mcpTools: 'MCP Tool Plugins',
+      security: 'Security',
+      automation: 'Automation',
+      reporting: 'Reporting',
+      integration: 'Integration',
+      utility: 'Utility',
+      vulnerability: 'Vulnerability Detection',
+      injection: 'Injection Detection',
+      xss: 'Cross-Site Scripting',
+      scanner: 'Scanner',
+      analyzer: 'Analyzer',
+      reporter: 'Report Generator',
+      custom: 'Custom',
+      other: 'Other'
+    },
+    mainCategory: 'Main Category',
+    subCategory: 'Sub Category',
+    newPlugin: 'New Plugin',
+    uploadPlugin: 'Upload Plugin',
+    aiGenerate: 'AI Generate',
+    pluginReview: 'Plugin Review',
+    searchPlugins: 'Search plugins',
+    selectionSummary: '{selected} selected, {page} on this page, {total} in filtered results',
+    batchEnableSelected: 'Enable Selected',
+    batchDisableSelected: 'Disable Selected',
+    batchDeleteSelected: 'Delete Selected',
+    batchDeleteConfirmTitle: 'Confirm Batch Delete',
+    batchDeleteConfirm: 'Delete {count} selected plugins? This action cannot be undone.',
+    batchDeleteSelectedSuccess: 'Deleted {count} selected plugins',
+    batchDeleteSelectedFailed: 'Failed to delete selected plugins',
+    batchEnableSelectedSuccess: 'Enabled {count} selected plugins',
+    batchDisableSelectedSuccess: 'Disabled {count} selected plugins',
+    operationFailed: 'Operation failed',
+    batchApprove: 'Batch Approve',
+    batchReject: 'Batch Reject',
+    qualityScore: 'Quality Score',
+    model: 'Model',
+    generatedAt: 'Generated At',
+    pendingReview: 'Pending Review',
+    approved: 'Approved',
+    rejected: 'Rejected',
+    validationFailed: 'Validation Failed',
+    pluginDetail: 'Plugin Detail',
+    approve: 'Approve',
+    reject: 'Reject',
+    selectFile: 'Select File',
+    upload: 'Upload',
+    pluginId: 'Plugin ID',
+    pluginIdPlaceholder: 'Enter plugin ID',
+    pluginNamePlaceholder: 'Enter plugin name',
+    version: 'Version',
+    author: 'Author',
+    authorPlaceholder: 'Enter author name',
+    defaultSeverity: 'Default Severity',
+    descriptionPlaceholder: 'Enter plugin description',
+    tags: 'Tags',
+    commaSeparated: 'Comma separated',
+    tagsPlaceholder: 'Enter tags, separated by commas',
+    pluginCode: 'Plugin Code',
+    insertTemplate: 'Insert Template',
+    format: 'Format',
+    codePlaceholder: 'Enter plugin code',
+    createPlugin: 'Create Plugin',
+    confirmDelete: 'Confirm Delete',
+    deleteConfirmText: 'Confirm delete plugin',
+    deleteWarning: 'Delete Warning',
+    aiPrompt: 'AI Prompt',
+    aiPromptPlaceholder: 'Enter AI generation prompt',
+    pluginType: 'Plugin Type',
+    severity: 'Severity',
+    generatePlugin: 'Generate Plugin',
+    testResult: 'Test Result',
+    advancedTest: 'Advanced Test',
+    requestUrl: 'Request URL',
+    httpMethod: 'HTTP Method',
+    runs: 'Runs',
+    concurrency: 'Concurrency',
+    headersJson: 'Headers (JSON)',
+    headersHint: 'Request headers in JSON format',
+    body: 'Request Body',
+    startTest: 'Start Test',
+    error: 'Error',
+    test: 'Test',
+    code: 'Code',
+    enabled: 'Enabled',
+    disabled: 'Disabled',
+    enable: 'Enable',
+    disable: 'Disable',
+    category: 'Category',
+    basicInfo: 'Basic Info',
+    vulnType: 'Vulnerability Type',
+    qualityBreakdown: 'Quality Breakdown',
+    syntaxScore: 'Syntax Score',
+    securityScore: 'Security Score',
+    codeQuality: 'Code Quality',
+    validationResult: 'Validation Result',
+    codeEditor: 'Code Editor',
+    agentInputs: 'Agent Inputs (JSON)',
+    aiGenerating: 'AI is generating plugin code, please wait...',
+    creating: 'Creating...',
+    deleting: 'Deleting...',
+    uploading: 'Uploading...',
+    readonly: 'Read-only',
+    copy: 'Copy',
+    copySuccess: 'Copied',
+    cancelEdit: 'Cancel Edit',
+    exitFullscreen: 'Exit Fullscreen',
+    approveSuccess: 'Plugin approved: {name}',
+    approveFailed: 'Approve failed: {error}',
+    rejectSuccess: 'Plugin rejected: {name}',
+    rejectFailed: 'Reject failed: {error}',
+    batchApproveSuccess: 'Approved {count} plugins',
+    batchApproveFailed: 'Batch approve failed: {error}',
+    batchRejectSuccess: 'Rejected {count} plugins',
+    batchRejectFailed: 'Batch reject failed: {error}',
+    toggleSuccess: 'Plugin {action}: {name}',
+    toggleFailed: '{action} failed: {error}',
+    toggleError: 'Operation failed',
+    favoriteError: 'Operation failed',
+    favoritedSuccess: 'Added to favorites',
+    unfavoritedSuccess: 'Removed from favorites',
+    validationPassed: 'Validation Passed',
+    testPassed: 'Test Passed',
+    testFailed: 'Test Failed',
+    testMessage: 'Test Message',
+    warnings: 'Warnings',
+    errors: 'Errors',
+    findings: 'Findings',
+    findingsTotal: 'Total Findings',
+    duration: 'Duration (ms)',
+    totalRuns: 'Total Runs',
+    totalDuration: 'Total Duration (ms)',
+    avgPerRun: 'Avg/Run (ms)',
+    runDetails: 'Run Details',
+    unique: 'Unique',
+    runOutput: 'Run',
+    executionResult: 'Execution Result',
+    failed: 'Failed',
+    success: 'Success',
+    agentToolResult: 'Agent Tool Execution Result',
+    noOutputData: 'No output data',
+    logicScore: 'Logic Score',
+    loadReviewError: 'Failed to load review plugins',
+    testing: 'Testing...',
+    aiAssistant: 'AI Assistant',
+    fixWithTaskPrompt: 'Fix this plugin code based on the current test failure details',
+    fixingWithTask: 'Plugin fix task is repairing the code...',
+    fixGeneratedByTask: 'Generated fixed code through the plugin fix task and applied it to the current editor.',
+    fixApplied: 'Fixed code applied',
+    fixAppliedWithWarnings: 'Fixed code applied, but validation issues remain',
+    fixFailed: 'Fix failed',
+    aiInputPlaceholder: 'Describe your changes...',
+    aiAssistantHint: 'Describe your changes and AI will help you edit the code',
+    fullCode: 'Full Code',
+    referToAi: 'Reference to AI',
+    lines: 'Lines',
+    testResultRef: 'Test Result',
+    addTestResult: 'Add Test Result',
+    noTestResult: 'Please run plugin test first',
+    testSuccess: 'Test successful',
+    testResultAdded: 'Test result added to AI assistant',
+    contextMenuHint: 'Right-click code to quickly reference in AI assistant',
+    selectedLines: 'Selected Code',
+    addSelection: 'Add Selection',
+    addAll: 'Add All',
+    addSelectedCode: 'Add selected code to context',
+    addFullCode: 'Add full code to context',
+    noCodeSelected: 'Please select code in the editor first',
+    noCode: 'No code available',
+    explainCode: 'Explain Code',
+    optimizeCode: 'Optimize Code',
+    fixBugs: 'Fix Issues',
+    codeFormatted: 'Code formatted',
+    formatFailed: 'Format failed',
+    codeApplied: 'Code applied',
+    codeMerged: 'Code merged',
+    reviewChanges: 'Please review code changes',
+    copyCode: 'Copy code',
+    collapse: 'Collapse',
+    expand: 'Expand',
+    refactorCode: 'Refactor code',
+    editorMinimized: 'Editor minimized',
+    includeCodeContext: 'Include code context',
+    applyChanges: 'Apply Changes',
+    previewChanges: 'Preview',
+    addToAiContext: 'Add to AI Context',
+    addedToContext: 'Added to context',
+    aiSuggestions: 'AI Suggestions',
+    blocks: 'code blocks',
+    apply: 'Apply',
+    shortcutHint: 'Enter to send · Shift+Enter for new line · Ctrl+K to toggle panel',
+    pluginSaved: 'Plugin saved',
+    pluginCreated: 'Plugin created successfully',
+    templateInserted: 'Template code inserted',
+    usingBuiltinTemplate: 'Using built-in template',
+    fullscreenMinimized: 'Fullscreen editor minimized',
+    shortcuts: 'Shortcuts',
+    keyboardShortcuts: 'Keyboard Shortcuts',
+    toggleAiPanel: 'Toggle AI Panel',
+    savePlugin: 'Save Plugin',
+    formatCode: 'Format Code',
+    toggleFullscreen: 'Toggle Fullscreen',
+    enableEdit: 'Enable Editing',
+
+    store: {
+      title: 'Plugin Store',
+      searchPlaceholder: 'Search plugins...',
+      allCategories: 'All Categories',
+      refreshToLoad: 'Click refresh to load plugins',
+      noPlugins: 'No plugins available',
+      noDescription: 'No description',
+      installed: 'Installed',
+      install: 'Install',
+      installSuccess: 'Plugin installed successfully',
+      installError: 'Installation failed',
+      fetchError: 'Failed to fetch plugin list',
+      downloading: 'Downloading...',
+      viewDetails: 'View Details',
+      justNow: 'Just updated',
+      minutesAgo: '{minutes} minutes ago',
+      hoursAgo: '{hours} hours ago',
+      listView: 'List View',
+      cardView: 'Card View'
+    },
+
+    // Agent plugin subcategories
+    agentCategories: {
+      recon: 'Reconnaissance',
+      discovery: 'Discovery',
+      risk: 'Risk Scanning',
+      vuln: 'Risk Scanning',
+      exploit: 'Exploitation',
+      monitor: 'Change Monitor',
+      utility: 'Utility',
+      scanner: 'Scanner',
+      analyzer: 'Analyzer',
+      reporter: 'Reporter',
+      custom: 'Custom'
+    },
+
+    trafficCategories: {
+      sqli: 'SQL Injection',
+      command_injection: 'Command Injection',
+      xss: 'Cross-Site Scripting',
+      idor: 'IDOR',
+      auth_bypass: 'Authentication Bypass',
+      csrf: 'CSRF',
+      info_leak: 'Information Disclosure',
+      file_upload: 'File Upload',
+      file_inclusion: 'File Inclusion',
+      path_traversal: 'Path Traversal',
+      xxe: 'XXE',
+      ssrf: 'SSRF',
+      report: 'Report',
+      custom: 'Custom'
+    },
+
+    intruderCategories: {
+      payload_generator: 'Payload Generator',
+      payload_processor: 'Payload Processor',
+      request_processor: 'Request Processor'
+    }
+  },
+
+  // License section
+  license: {
+    title: 'License Management',
+    licenseStatus: 'License Status',
+    licenseType: 'License Type',
+    licenseKey: 'License Key',
+    licenseExpiry: 'License Expiry',
+    licenseFeatures: 'License Features',
+    activateLicense: 'Activate License',
+    deactivateLicense: 'Deactivate License',
+    renewLicense: 'Renew License',
+    upgradeLicense: 'Upgrade License',
+
+    status: {
+      active: 'Active',
+      inactive: 'Inactive',
+      expired: 'Expired',
+      trial: 'Trial',
+      invalid: 'Invalid'
+    },
+
+    types: {
+      trial: 'Trial',
+      standard: 'Standard',
+      professional: 'Professional',
+      enterprise: 'Enterprise'
+    }
+  },
+
+  // Proxifier Panel section
+  proxifierPanel: {
+    rules: {
+      title: 'Proxy Rules',
+      noRules: 'No rules',
+      table: {
+        name: 'Name',
+        applications: 'Applications',
+        applicationsExample: 'Example: Chrome, Safari',
+        targetHosts: 'Target Hosts',
+        targetHostsExample: 'Example: *.example.com',
+        targetPorts: 'Target Ports',
+        targetPortsExample: 'Example: 80, 443',
+        action: 'Action',
+        direct: 'Direct',
+        block: 'Block',
+        viaProxy: 'Via Proxy',
+        proxyFormat: 'Proxy: [Proxy Name]'
+      }
+    },
+    buttons: {
+      add: 'Add',
+      clone: 'Clone',
+      edit: 'Edit',
+      remove: 'Remove',
+      enabled: 'Enabled',
+      cancel: 'Cancel',
+      save: 'Save',
+      close: 'Close'
+    }
+  }
+}
