@@ -200,6 +200,11 @@
             :submenu="interceptTextCodecSubmenu"
             label-prefix="trafficAnalysis.intercept.contextMenu"
           />
+          <TrafficContextSubmenu
+            v-if="interceptCodecSubmenu"
+            :submenu="interceptCodecSubmenu"
+            label-prefix="trafficAnalysis.intercept.contextMenu"
+          />
           <div v-if="interceptTextCodecSubmenu && interceptSendAfterCodecContextMenuSections.length" class="divider my-1 h-px"></div>
           <TrafficContextMenuSections
             :sections="interceptSendAfterCodecContextMenuSections"
@@ -569,6 +574,8 @@ import { buildSavedInterceptFilterRule } from './proxyInterceptFilterSupport'
 import type { ContextMenuState, FilterRule, ProxyInterceptListenerCleanup } from './proxyInterceptTypes'
 import { buildInterceptViewTabs, createDefaultInterceptFilterRule } from './proxyInterceptViewSupport'
 import { buildInterceptStateKey, resolveTrafficTextDisplayMode } from './trafficMessagePresentationSupport'
+import { useTrafficCodec } from './codec/useTrafficCodec'
+import { buildTrafficCodecContextSubmenu, extractCodecMetaFromUrl } from './codec/trafficCodecContextMenuSupport'
 
 interface CommandResponse<T> {
   success: boolean
@@ -577,6 +584,8 @@ interface CommandResponse<T> {
 }
 
 const { t, locale } = useI18n();
+const codec = useTrafficCodec()
+const activeCodecRuleIds = ref<string[]>([])
 const { enabledTargets } = useTrafficSendTargets()
 const {
   panelRef: interceptContentHeaderRef,
@@ -779,6 +788,39 @@ const interceptTextCodecSubmenu = computed(() => (
       })
     : null
 ))
+const interceptCodecSubmenu = computed(() => {
+  const item = contextMenu.value.item
+  if (!item || item.type !== 'request') return null
+  const meta = extractCodecMetaFromUrl(item.data.url, item.data.method, item.data.headers)
+  const matchedRules = codec.rules.rules.value.filter(r => codec.hasActiveCodec(meta))
+  return buildTrafficCodecContextSubmenu({
+    matchedRules,
+    codecViewEnabled: codec.codecViewEnabled.value,
+    onToggleRule: async (ruleId) => {
+      const rule = codec.rules.rules.value.find(r => r.id === ruleId)
+      if (rule) {
+        await codec.rules.saveRule({ ...rule, enabled: !rule.enabled })
+        codec.invalidateCache()
+        loadCurrentItemContent()
+      }
+      closeContextMenu()
+    },
+    onToggleView: () => {
+      codec.codecViewEnabled.value = !codec.codecViewEnabled.value
+      codec.invalidateCache()
+      loadCurrentItemContent()
+      closeContextMenu()
+    },
+    onCreateRule: () => {
+      // TODO: open rule creation dialog (Task 8)
+      closeContextMenu()
+    },
+    onManageRules: () => {
+      // TODO: open rules panel (Task 11)
+      closeContextMenu()
+    },
+  })
+})
 const interceptFilterSubmenu = computed(() =>
   buildTrafficContextSubmenu({
     key: 'intercept-filter',
@@ -1491,6 +1533,20 @@ function loadCurrentItemContent() {
   if (!item) return;
 
   requestContent.value = registerInterceptItemOriginalContent(item);
+
+  if (codec.codecViewEnabled.value && item.type === 'request') {
+    const meta = extractCodecMetaFromUrl(item.data.url, item.data.method, item.data.headers)
+    if (codec.hasActiveCodec(meta)) {
+      codec.decode(requestContent.value, meta).then(result => {
+        if (result.success && result.appliedRuleIds.length > 0) {
+          requestContent.value = result.content
+          activeCodecRuleIds.value = result.appliedRuleIds
+        }
+      })
+    } else {
+      activeCodecRuleIds.value = []
+    }
+  }
 }
 
 function registerInterceptItemOriginalContent(item: InterceptedItem) {
@@ -1527,7 +1583,20 @@ async function forwardCurrentItem() {
   
   isProcessing.value = true;
   try {
-    const modifiedContent = resolveCurrentForwardModifiedContent(item);
+    let modifiedContent = resolveCurrentForwardModifiedContent(item);
+
+    if (activeCodecRuleIds.value.length > 0 && item.type === 'request') {
+      const meta = extractCodecMetaFromUrl(item.data.url, item.data.method, item.data.headers)
+      const encodeResult = await codec.encode(modifiedContent ?? requestContent.value, meta)
+      if (!encodeResult.success) {
+        dialog.toast.error(`编码失败: ${encodeResult.error}`)
+        isProcessing.value = false
+        return
+      }
+      if (encodeResult.appliedRuleIds.length > 0) {
+        modifiedContent = encodeResult.content
+      }
+    }
     
     if (item.type === 'request') {
       const response = await invoke<any>('forward_intercepted_request', { 
@@ -1694,7 +1763,11 @@ async function hydratePendingInterceptItems() {
           upsertInterceptedRequest(item.data)
           return
         }
-        upsertInterceptedResponse(item.data)
+        if (item.type === 'response') {
+          upsertInterceptedResponse(item.data)
+          return
+        }
+        upsertInterceptedWebSocket(item.data)
       })
   } catch (error: any) {
     console.error('Failed to hydrate pending intercept items:', error)

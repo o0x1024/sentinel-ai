@@ -16,6 +16,11 @@
         :submenu="repeaterTextCodecSubmenu"
         label-prefix="trafficAnalysis.repeater.contextMenu"
       />
+      <TrafficContextSubmenu
+        v-if="repeaterCodecSubmenu"
+        :submenu="repeaterCodecSubmenu"
+        label-prefix="trafficAnalysis.repeater.contextMenu"
+      />
       <div v-if="repeaterTextCodecSubmenu && repeaterContextMenuAfterCodecSections.length" class="divider my-1 h-0"></div>
       <TrafficContextMenuSections
         :sections="repeaterContextMenuAfterCodecSections"
@@ -557,8 +562,13 @@ import { isEditableKeyboardTarget } from '@/utils/editableKeyboardTarget'
 import { useTrafficWorkbenchStore } from './workbench/stores/useTrafficWorkbenchStore'
 import type { RequestDraft } from './workbench/model/requestDraft'
 import type { TrafficWorkbenchRequestContext, TrafficWorkbenchRequestVariant } from './trafficWorkbenchTypes'
+import { useTrafficCodec } from './codec/useTrafficCodec'
+import { buildTrafficCodecContextSubmenu, extractCodecMetaFromRawRequest } from './codec/trafficCodecContextMenuSupport'
 
 const { t, locale } = useI18n();
+const codec = useTrafficCodec()
+const activeCodecRuleIds = ref<string[]>([])
+const codecOriginalRawByTabId = new Map<string, string>()
 const { enabledTargets } = useTrafficSendTargets()
 const { settings } = useTrafficDisplaySettings()
 const REQUEST_PANE_COMPACT_THRESHOLD = 640
@@ -851,6 +861,39 @@ const repeaterTextCodecSubmenu = computed(() => (
       })
     : null
 ))
+const repeaterCodecSubmenu = computed(() => {
+  const tab = currentTab.value
+  if (!tab || contextMenu.value.pane !== 'request') return null
+  const meta = extractCodecMetaFromRawRequest(tab.rawRequest, tab.targetHost)
+  const matchedRules = codec.rules.rules.value.filter(r => codec.hasActiveCodec(meta))
+  return buildTrafficCodecContextSubmenu({
+    matchedRules,
+    codecViewEnabled: codec.codecViewEnabled.value,
+    onToggleRule: async (ruleId) => {
+      const rule = codec.rules.rules.value.find(r => r.id === ruleId)
+      if (rule) {
+        await codec.rules.saveRule({ ...rule, enabled: !rule.enabled })
+        codec.invalidateCache()
+        void loadRepeaterCodecContent()
+      }
+      hideContextMenu()
+    },
+    onToggleView: () => {
+      codec.codecViewEnabled.value = !codec.codecViewEnabled.value
+      codec.invalidateCache()
+      void loadRepeaterCodecContent()
+      hideContextMenu()
+    },
+    onCreateRule: () => {
+      // TODO: open rule creation dialog (Task 8)
+      hideContextMenu()
+    },
+    onManageRules: () => {
+      // TODO: open rules panel (Task 11)
+      hideContextMenu()
+    },
+  })
+})
 const repeaterTabContextMenuSections = computed(() =>
   buildTrafficContextMenuSections([
     {
@@ -931,6 +974,7 @@ function syncTabFromDraft(tab: RepeaterTab, draft: RequestDraft) {
   tab.prettyRequest = formatRepeaterPrettyRequest(draft.rawRequest)
   tab.requestTab = draft.preferredView === 'raw' ? 'raw' : 'pretty'
   restoreRepeaterTabResponseFromReplayRuns(tab, workbenchState.replay.replayRuns.value)
+  resetRepeaterCodecOriginal(tab)
 }
 
 function restoreMissingDraftTabResponsesFromReplayRuns() {
@@ -975,6 +1019,7 @@ function syncTabFromExchangeRequest(tab: RepeaterTab, request: HttpExchangeReque
   tab.isSending = false
   tab.modified = false
   tab.userEdited = false
+  resetRepeaterCodecOriginal(tab)
 }
 
 function openPreviewRequest(request: HttpExchangeRequest) {
@@ -1003,6 +1048,7 @@ function openPreviewRequest(request: HttpExchangeRequest) {
       activeTabIndex.value = tabs.value.length - 1
     } finally {
       applyingWorkbenchDraft = false
+      void loadRepeaterCodecContent()
     }
   })
 }
@@ -1072,6 +1118,7 @@ function openDraftInRepeater(draftId: string | null | undefined) {
     activeTabIndex.value = tabs.value.length - 1
   } finally {
     applyingWorkbenchDraft = false
+    void loadRepeaterCodecContent()
   }
 }
 
@@ -1242,8 +1289,46 @@ async function closeTab(index: number) {
 }
 
 function selectTab(index: number) {
+  syncCurrentRequestEditorContentToTab()
   activeTabIndex.value = index;
   syncCurrentTabBackToDraft()
+  void loadRepeaterCodecContent()
+}
+
+function registerRepeaterOriginalRawRequest(tab: RepeaterTab) {
+  if (!codecOriginalRawByTabId.has(tab.id)) {
+    codecOriginalRawByTabId.set(tab.id, tab.rawRequest)
+  }
+  return codecOriginalRawByTabId.get(tab.id) || tab.rawRequest
+}
+
+function resetRepeaterCodecOriginal(tab: RepeaterTab) {
+  codecOriginalRawByTabId.delete(tab.id)
+  activeCodecRuleIds.value = []
+}
+
+async function loadRepeaterCodecContent() {
+  const tab = currentTab.value
+  if (!tab || tab.requestTab === 'hex') return
+
+  const original = registerRepeaterOriginalRawRequest(tab)
+  tab.rawRequest = original
+  tab.prettyRequest = formatRepeaterPrettyRequest(original)
+
+  if (codec.codecViewEnabled.value) {
+    const meta = extractCodecMetaFromRawRequest(original, tab.targetHost)
+    if (codec.hasActiveCodec(meta)) {
+      const result = await codec.decode(original, meta)
+      if (result.success && result.appliedRuleIds.length > 0) {
+        tab.rawRequest = result.content
+        tab.prettyRequest = formatRepeaterPrettyRequest(result.content)
+        activeCodecRuleIds.value = result.appliedRuleIds
+        return
+      }
+    }
+  }
+
+  activeCodecRuleIds.value = []
 }
 
 function cancelRequest() {
@@ -1330,7 +1415,26 @@ async function sendRequest() {
   const tabId = tab.id;
   
   try {
-    const exchangeRequest = buildSourceRequestFromRawRequest(tab.rawRequest, {
+    let rawRequestToSend = tab.rawRequest
+
+    if (activeCodecRuleIds.value.length > 0) {
+      const meta = extractCodecMetaFromRawRequest(
+        registerRepeaterOriginalRawRequest(tab),
+        tab.targetHost,
+      )
+      const encodeResult = await codec.encode(rawRequestToSend, meta)
+      if (!encodeResult.success) {
+        dialog.toast.error(`编码失败: ${encodeResult.error}`)
+        tab.isSending = false
+        abortControllers.delete(tab.id)
+        return
+      }
+      if (encodeResult.appliedRuleIds.length > 0) {
+        rawRequestToSend = encodeResult.content
+      }
+    }
+
+    const exchangeRequest = buildSourceRequestFromRawRequest(rawRequestToSend, {
       host: tab.targetHost,
       port: tab.targetPort || 443,
       useTls: tab.useTls,
