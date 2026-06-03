@@ -6,8 +6,10 @@ use tauri::Manager;
 use super::lifecycle;
 use crate::commands::{
     monitor_commands::MonitorSchedulerState, packet_capture_commands::PacketCaptureState,
-    proxifier_commands::ProxifierState, tool_commands, traffic::TrafficAnalysisState,
+    proxifier_commands::ProxifierState, tool_commands,
+    traffic::{TrafficAnalysisState, TrafficCodecState},
 };
+use crate::services::traffic_codec::{TrafficCodecEngine, TrafficCodecStore};
 use crate::services::{
     ai::AiServiceManager,
     load_plugin_default_inputs,
@@ -271,6 +273,28 @@ pub fn setup_app(app: &mut tauri::App<tauri::Wry>) -> Result<(), Box<dyn std::er
         let traffic_state = Arc::new(TrafficAnalysisState::new(db_service.clone()));
         let traffic_state_for_manage = (*traffic_state).clone();
 
+        let codec_pool = match db_service.get_sqlite_pool() {
+            Ok(pool) => pool,
+            Err(error) => {
+                tracing::warn!(
+                    "Traffic codec store falling back to in-memory SQLite: {}",
+                    error
+                );
+                sqlx::SqlitePool::connect("sqlite::memory:")
+                    .await
+                    .expect("failed to create in-memory SQLite pool for traffic codec store")
+            }
+        };
+        let codec_store = Arc::new(TrafficCodecStore::new(codec_pool));
+        if let Err(error) = codec_store.initialize().await {
+            tracing::warn!("Failed to initialize traffic codec store: {}", error);
+        }
+        let codec_rules = codec_store.list_rules().await.unwrap_or_default();
+        let codec_state = TrafficCodecState {
+            engine: Arc::new(tokio::sync::RwLock::new(TrafficCodecEngine::new(codec_rules))),
+            store: codec_store,
+        };
+
         // Extract PluginManager for workflow executor access
         let plugin_manager_for_workflow = traffic_state.get_plugin_manager();
 
@@ -362,6 +386,7 @@ pub fn setup_app(app: &mut tauri::App<tauri::Wry>) -> Result<(), Box<dyn std::er
         handle.manage(asset_service);
         handle.manage(vulnerability_service);
         handle.manage(traffic_state_for_manage);
+        handle.manage(codec_state);
         handle.manage(plugin_manager_for_workflow);
         handle.manage(ProxifierState::new());
         handle.manage(PacketCaptureState::default());
