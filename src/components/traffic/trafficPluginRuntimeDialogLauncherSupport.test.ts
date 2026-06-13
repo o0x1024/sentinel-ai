@@ -15,48 +15,39 @@ import type {
 } from './trafficPluginRuntimeQueueTypes'
 
 function createSnapshot(): TrafficPluginRuntimeQueueStatsSnapshot {
-  const stats = (
-    kind: TrafficPluginRuntimeQueueStatsSnapshot['activeProbe']['kind'],
-    seed: number
-  ) => ({
-    kind,
-    pendingCount: seed,
-    queuedCount: 0,
-    scheduledCount: 0,
-    runningCount: seed + 1,
-    recentCount: 0,
-    maxQueueDepth: 100,
-    activeGlobal: 0,
-    activeRuns: 0,
-    activePlugins: 0,
-    activeHosts: 0,
-    hottestHost: null,
-    hottestHostActive: 0,
-    cancelledRunCount: 0,
-    configuredMaxQueueDepth: 10 + seed,
-    configuredMaxGlobalConcurrent: 20 + seed,
-    configuredMaxConcurrentPerHost: 2,
-    configuredMaxConcurrentPerRun: 4,
-    configuredMaxConcurrentPerPlugin: 4,
-    rejectedTotalCount: seed + 2,
-    rejectedCancelledRunCount: 0,
-    rejectedQueueLimitCount: 0,
-    rejectedRunPendingLimitCount: 0,
-    rejectedPluginPendingLimitCount: 0,
-    recentWindowTotalCount: 0,
-    recentWindowCompletedCount: 0,
-    recentWindowFailedCount: 0,
-    recentWindowCancelledCount: 0,
-    recentWindowAvgQueueWaitMs: 0,
-    recentWindowAvgResponseElapsedMs: 0,
-  })
-
   return {
-    activeProbe: stats('traffic_active_probe', 1),
-    bountyFetch: stats('bounty_fetch', 2),
-    monitorFetch: stats('monitor_fetch', 3),
-    agentFetch: stats('agent_fetch', 4),
-    pluginTestFetch: stats('plugin_test_fetch', 5),
+    activeProbe: {
+      kind: 'traffic_active_probe',
+      pendingCount: 1,
+      queuedCount: 0,
+      scheduledCount: 0,
+      runningCount: 2,
+      recentCount: 0,
+      maxQueueDepth: 100,
+      activeGlobal: 0,
+      activeRuns: 0,
+      activePlugins: 0,
+      activeHosts: 0,
+      hottestHost: null,
+      hottestHostActive: 0,
+      cancelledRunCount: 0,
+      configuredMaxQueueDepth: 11,
+      configuredMaxGlobalConcurrent: 21,
+      configuredMaxConcurrentPerHost: 2,
+      configuredMaxConcurrentPerRun: 4,
+      configuredMaxConcurrentPerPlugin: 4,
+      rejectedTotalCount: 3,
+      rejectedCancelledRunCount: 0,
+      rejectedQueueLimitCount: 0,
+      rejectedRunPendingLimitCount: 0,
+      rejectedPluginPendingLimitCount: 0,
+      recentWindowTotalCount: 0,
+      recentWindowCompletedCount: 0,
+      recentWindowFailedCount: 0,
+      recentWindowCancelledCount: 0,
+      recentWindowAvgQueueWaitMs: 0,
+      recentWindowAvgResponseElapsedMs: 0,
+    },
   }
 }
 
@@ -78,22 +69,6 @@ function createHistory(): TrafficPluginRuntimeQueueHistorySnapshot {
       recentWindowTotalCount: 0,
     },
   ]
-  history.bountyFetch = [
-    {
-      recordedAt: '2026-05-05T00:00:00Z',
-      pendingCount: 3,
-      runningCount: 4,
-      rejectedTotalCount: 5,
-      recentWindowTotalCount: 0,
-    },
-    {
-      recordedAt: '2026-05-05T00:00:03Z',
-      pendingCount: 4,
-      runningCount: 4,
-      rejectedTotalCount: 7,
-      recentWindowTotalCount: 0,
-    },
-  ]
   return history
 }
 
@@ -108,36 +83,34 @@ describe('trafficPluginRuntimeDialogLauncherSupport', () => {
     ).toBeNull()
   })
 
-  it('aggregates selected policies into one launcher summary', () => {
+  it('aggregates active probe into launcher summary', () => {
     const summary = buildTrafficPluginRuntimeLauncherSummary(createSnapshot(), createHistory(), [
       'activeProbe',
-      'bountyFetch',
     ])
 
     expect(summary).not.toBeNull()
-    expect(summary?.pendingCount).toBe(3)
-    expect(summary?.pendingLimit).toBe(23)
-    expect(summary?.runningCount).toBe(5)
-    expect(summary?.runningLimit).toBe(43)
-    expect(summary?.rejectedCount).toBe(7)
-    expect(summary?.rejectedSeries).toEqual([6, 9])
+    expect(summary?.pendingCount).toBe(1)
+    expect(summary?.pendingLimit).toBe(11)
+    expect(summary?.runningCount).toBe(2)
+    expect(summary?.runningLimit).toBe(21)
+    expect(summary?.rejectedCount).toBe(3)
+    expect(summary?.rejectedSeries).toEqual([1, 2])
   })
 
   it('builds human-readable tooltip text from launcher summary', () => {
     const summary = buildTrafficPluginRuntimeLauncherSummary(createSnapshot(), createHistory(), [
       'activeProbe',
-      'bountyFetch',
     ])
 
     expect(summary).not.toBeNull()
     expect(getTrafficPluginRuntimePendingTooltip(summary!)).toBe(
-      'pending 3/23, ratio 13%; action: no immediate adjustment needed'
+      'pending 1/11, ratio 9%; action: no immediate adjustment needed'
     )
     expect(getTrafficPluginRuntimeRunningTooltip(summary!)).toBe(
-      'running 5/43, ratio 12%; action: no immediate adjustment needed'
+      'running 2/21, ratio 10%; action: no immediate adjustment needed'
     )
     expect(getTrafficPluginRuntimeRejectedTooltip(summary!)).toBe(
-      'rejected 7, +3 in last 2 samples; action: inspect queue depth and per-run or per-plugin pending limits; requests are being dropped'
+      'rejected 3, +1 in last 2 samples; action: review queue and pending limits before rejection growth becomes sustained'
     )
   })
 

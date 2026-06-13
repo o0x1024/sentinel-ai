@@ -1,7 +1,4 @@
-use sentinel_plugins::{
-    get_plugin_request_queue_stats, PluginFetchPolicyKind, PluginRequestQueueStats,
-    PluginRuntimeSettings,
-};
+use sentinel_plugins::{get_active_probe_request_queue_stats, PluginRuntimeSettings};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
@@ -19,11 +16,7 @@ pub struct SetTrafficPluginRuntimeSettingsPayload {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrafficPluginRuntimeQueueStatsSnapshot {
-    pub active_probe: PluginRequestQueueStats,
-    pub bounty_fetch: PluginRequestQueueStats,
-    pub monitor_fetch: PluginRequestQueueStats,
-    pub agent_fetch: PluginRequestQueueStats,
-    pub plugin_test_fetch: PluginRequestQueueStats,
+    pub active_probe: sentinel_plugins::active_probe_queue::ActiveProbeQueueStats,
 }
 
 #[tauri::command]
@@ -73,13 +66,7 @@ pub async fn get_traffic_plugin_runtime_queue_stats(
 ) -> Result<CommandResponse<TrafficPluginRuntimeQueueStatsSnapshot>, String> {
     Ok(CommandResponse::ok(
         TrafficPluginRuntimeQueueStatsSnapshot {
-            active_probe: get_plugin_request_queue_stats(PluginFetchPolicyKind::TrafficActiveProbe),
-            bounty_fetch: get_plugin_request_queue_stats(PluginFetchPolicyKind::BountyFetch),
-            monitor_fetch: get_plugin_request_queue_stats(PluginFetchPolicyKind::MonitorFetch),
-            agent_fetch: get_plugin_request_queue_stats(PluginFetchPolicyKind::AgentFetch),
-            plugin_test_fetch: get_plugin_request_queue_stats(
-                PluginFetchPolicyKind::PluginTestFetch,
-            ),
+            active_probe: get_active_probe_request_queue_stats(),
         },
     ))
 }

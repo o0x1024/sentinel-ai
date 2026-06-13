@@ -1,17 +1,11 @@
 import {
   createDefaultTrafficPluginRuntimeSettings,
   type TrafficPluginActiveProbeSettings,
-  type TrafficPluginFetchPolicySettings,
   type TrafficPluginRuntimeSettings,
 } from './proxyConfigurationTypes'
 
 export type TrafficPluginRuntimePreset = 'local_fast' | 'balanced' | 'conservative'
-export type TrafficPluginRuntimePolicyId =
-  | 'activeProbe'
-  | 'bountyFetch'
-  | 'monitorFetch'
-  | 'agentFetch'
-  | 'pluginTestFetch'
+export type TrafficPluginRuntimePolicyId = 'activeProbe'
 export type TrafficPluginRuntimePolicySettings =
   TrafficPluginRuntimeSettings[TrafficPluginRuntimePolicyId]
 
@@ -26,23 +20,6 @@ function normalizeJitterRange(range: [number, number], max: number): [number, nu
   const start = clampInteger(range[0] ?? 0, 0, max)
   const end = clampInteger(range[1] ?? 0, 0, max)
   return start <= end ? [start, end] : [end, start]
-}
-
-function normalizeFetchPolicySettings(
-  settings: TrafficPluginFetchPolicySettings
-): TrafficPluginFetchPolicySettings {
-  return {
-    maxQueueDepth: clampInteger(settings.maxQueueDepth || 1, 1, 5000),
-    maxPendingPerRun: clampInteger(settings.maxPendingPerRun || 1, 1, 2000),
-    maxPendingPerPlugin: clampInteger(settings.maxPendingPerPlugin || 1, 1, 5000),
-    maxGlobalConcurrent: clampInteger(settings.maxGlobalConcurrent || 1, 1, 128),
-    maxConcurrentPerHost: clampInteger(settings.maxConcurrentPerHost || 1, 1, 32),
-    maxConcurrentPerRun: clampInteger(settings.maxConcurrentPerRun || 1, 1, 128),
-    maxConcurrentPerPlugin: clampInteger(settings.maxConcurrentPerPlugin || 1, 1, 128),
-    minHostDelayMs: clampInteger(settings.minHostDelayMs || 0, 0, 60000),
-    jitterRange: normalizeJitterRange(settings.jitterRange, 30000),
-    timeoutMs: clampInteger(settings.timeoutMs || 3000, 1000, 120000),
-  }
 }
 
 function normalizeActiveProbeSettings(
@@ -67,10 +44,6 @@ export function normalizeTrafficPluginRuntimeSettings(
 ): TrafficPluginRuntimeSettings {
   return {
     activeProbe: normalizeActiveProbeSettings(settings.activeProbe),
-    bountyFetch: normalizeFetchPolicySettings(settings.bountyFetch),
-    monitorFetch: normalizeFetchPolicySettings(settings.monitorFetch),
-    agentFetch: normalizeFetchPolicySettings(settings.agentFetch),
-    pluginTestFetch: normalizeFetchPolicySettings(settings.pluginTestFetch),
   }
 }
 
@@ -84,22 +57,6 @@ export function mergeTrafficPluginRuntimeSettings(
     activeProbe: {
       ...defaults.activeProbe,
       ...(settings.activeProbe || {}),
-    },
-    bountyFetch: {
-      ...defaults.bountyFetch,
-      ...(settings.bountyFetch || {}),
-    },
-    monitorFetch: {
-      ...defaults.monitorFetch,
-      ...(settings.monitorFetch || {}),
-    },
-    agentFetch: {
-      ...defaults.agentFetch,
-      ...(settings.agentFetch || {}),
-    },
-    pluginTestFetch: {
-      ...defaults.pluginTestFetch,
-      ...(settings.pluginTestFetch || {}),
     },
   })
 }
@@ -124,48 +81,6 @@ export function createTrafficPluginRuntimePreset(
         jitterRange: [0, 50],
         timeoutMs: 3000,
       },
-      bountyFetch: {
-        ...defaults.bountyFetch,
-        maxGlobalConcurrent: 16,
-        maxConcurrentPerHost: 3,
-        maxConcurrentPerRun: 16,
-        maxConcurrentPerPlugin: 16,
-        minHostDelayMs: 200,
-        jitterRange: [0, 100],
-      },
-      monitorFetch: {
-        ...defaults.monitorFetch,
-        maxQueueDepth: 3000,
-        maxPendingPerRun: 1000,
-        maxPendingPerPlugin: 2000,
-        maxGlobalConcurrent: 16,
-        maxConcurrentPerHost: 4,
-        maxConcurrentPerRun: 16,
-        maxConcurrentPerPlugin: 16,
-        minHostDelayMs: 100,
-        jitterRange: [0, 100],
-        timeoutMs: 3000,
-      },
-      agentFetch: {
-        ...defaults.agentFetch,
-        maxGlobalConcurrent: 16,
-        maxConcurrentPerHost: 3,
-        maxConcurrentPerRun: 16,
-        maxConcurrentPerPlugin: 16,
-        minHostDelayMs: 100,
-        jitterRange: [0, 50],
-        timeoutMs: 3000,
-      },
-      pluginTestFetch: {
-        ...defaults.pluginTestFetch,
-        maxGlobalConcurrent: 16,
-        maxConcurrentPerHost: 2,
-        maxConcurrentPerRun: 16,
-        maxConcurrentPerPlugin: 16,
-        minHostDelayMs: 0,
-        jitterRange: [0, 20],
-        timeoutMs: 3000,
-      },
     }
   }
 
@@ -178,45 +93,6 @@ export function createTrafficPluginRuntimePreset(
       maxConcurrentPerRun: 16,
       maxConcurrentPerPlugin: 16,
       jitterRange: [400, 1000],
-      timeoutMs: 3000,
-    },
-    bountyFetch: {
-      ...defaults.bountyFetch,
-      maxGlobalConcurrent: 16,
-      maxConcurrentPerHost: 1,
-      maxConcurrentPerRun: 16,
-      maxConcurrentPerPlugin: 16,
-      minHostDelayMs: 1500,
-      jitterRange: [400, 1000],
-      timeoutMs: 3000,
-    },
-    monitorFetch: {
-      ...defaults.monitorFetch,
-      maxGlobalConcurrent: 16,
-      maxConcurrentPerRun: 16,
-      maxConcurrentPerPlugin: 16,
-      minHostDelayMs: 3000,
-      jitterRange: [800, 2500],
-      timeoutMs: 3000,
-    },
-    agentFetch: {
-      ...defaults.agentFetch,
-      maxGlobalConcurrent: 16,
-      maxConcurrentPerHost: 1,
-      maxConcurrentPerRun: 16,
-      maxConcurrentPerPlugin: 16,
-      minHostDelayMs: 1000,
-      jitterRange: [300, 800],
-      timeoutMs: 3000,
-    },
-    pluginTestFetch: {
-      ...defaults.pluginTestFetch,
-      maxGlobalConcurrent: 16,
-      maxConcurrentPerHost: 1,
-      maxConcurrentPerRun: 16,
-      maxConcurrentPerPlugin: 16,
-      minHostDelayMs: 300,
-      jitterRange: [50, 200],
       timeoutMs: 3000,
     },
   }
@@ -232,9 +108,7 @@ export function applyTrafficPluginRuntimePresetToPolicies(
   for (const policyId of policyIds) {
     if (policyId === 'activeProbe') {
       nextSettings.activeProbe = presetSettings.activeProbe
-      continue
     }
-    nextSettings[policyId] = presetSettings[policyId]
   }
   return normalizeTrafficPluginRuntimeSettings(nextSettings)
 }
@@ -248,9 +122,7 @@ export function resetTrafficPluginRuntimePoliciesToDefaults(
   for (const policyId of policyIds) {
     if (policyId === 'activeProbe') {
       nextSettings.activeProbe = defaults.activeProbe
-      continue
     }
-    nextSettings[policyId] = defaults[policyId]
   }
   return normalizeTrafficPluginRuntimeSettings(nextSettings)
 }

@@ -1,9 +1,4 @@
-export type TrafficPluginRuntimePolicyKind =
-  | 'traffic_active_probe'
-  | 'bounty_fetch'
-  | 'monitor_fetch'
-  | 'agent_fetch'
-  | 'plugin_test_fetch'
+export type TrafficPluginRuntimePolicyKind = 'traffic_active_probe'
 
 export interface TrafficPluginRuntimeQueueStats {
   kind: TrafficPluginRuntimePolicyKind
@@ -40,10 +35,6 @@ export interface TrafficPluginRuntimeQueueStats {
 
 export interface TrafficPluginRuntimeQueueStatsSnapshot {
   activeProbe: TrafficPluginRuntimeQueueStats
-  bountyFetch: TrafficPluginRuntimeQueueStats
-  monitorFetch: TrafficPluginRuntimeQueueStats
-  agentFetch: TrafficPluginRuntimeQueueStats
-  pluginTestFetch: TrafficPluginRuntimeQueueStats
 }
 
 export interface TrafficPluginRuntimeQueueHistoryPoint {
@@ -56,10 +47,6 @@ export interface TrafficPluginRuntimeQueueHistoryPoint {
 
 export interface TrafficPluginRuntimeQueueHistorySnapshot {
   activeProbe: TrafficPluginRuntimeQueueHistoryPoint[]
-  bountyFetch: TrafficPluginRuntimeQueueHistoryPoint[]
-  monitorFetch: TrafficPluginRuntimeQueueHistoryPoint[]
-  agentFetch: TrafficPluginRuntimeQueueHistoryPoint[]
-  pluginTestFetch: TrafficPluginRuntimeQueueHistoryPoint[]
 }
 
 function normalizeNullableString(value: unknown): string | null {
@@ -70,32 +57,15 @@ function normalizeNumber(value: unknown, fallback = 0): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
 
-function normalizeKind(value: unknown): TrafficPluginRuntimePolicyKind | null {
-  switch (value) {
-    case 'traffic_active_probe':
-    case 'bounty_fetch':
-    case 'monitor_fetch':
-    case 'agent_fetch':
-    case 'plugin_test_fetch':
-      return value
-    default:
-      return null
-  }
-}
-
 function normalizeStats(payload: unknown): TrafficPluginRuntimeQueueStats | null {
   if (!payload || typeof payload !== 'object') {
     return null
   }
 
   const candidate = payload as Record<string, unknown>
-  const kind = normalizeKind(candidate.kind)
-  if (!kind) {
-    return null
-  }
 
   return {
-    kind,
+    kind: 'traffic_active_probe',
     pendingCount: normalizeNumber(candidate.pendingCount),
     queuedCount: normalizeNumber(candidate.queuedCount),
     scheduledCount: normalizeNumber(candidate.scheduledCount),
@@ -140,20 +110,9 @@ export function normalizeTrafficPluginRuntimeQueueStatsSnapshot(
 
   const candidate = payload as Record<string, unknown>
   const activeProbe = normalizeStats(candidate.activeProbe)
-  const bountyFetch = normalizeStats(candidate.bountyFetch)
-  const monitorFetch = normalizeStats(candidate.monitorFetch)
-  const agentFetch = normalizeStats(candidate.agentFetch)
-  const pluginTestFetch = normalizeStats(candidate.pluginTestFetch)
-
-  if (!activeProbe || !bountyFetch || !monitorFetch || !agentFetch || !pluginTestFetch) {
+  if (!activeProbe) {
     return null
   }
 
-  return {
-    activeProbe,
-    bountyFetch,
-    monitorFetch,
-    agentFetch,
-    pluginTestFetch,
-  }
+  return { activeProbe }
 }

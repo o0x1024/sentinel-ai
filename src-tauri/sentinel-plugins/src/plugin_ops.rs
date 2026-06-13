@@ -5,13 +5,10 @@
 //! extensions and the plugin engine.
 
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
-use tokio::sync::oneshot;
 use tracing::info;
 
 use crate::plugin_finding_sanitizer::sanitize_response_body_for_evidence;
-use crate::request_scheduler::PluginFetchPolicyKind;
+use crate::active_probe_queue::cancel_requests_by_run;
 use crate::types::{Confidence, Finding, Severity};
 
 /// Finding 的 JavaScript 表示（用于序列化）
@@ -304,12 +301,6 @@ pub struct ActiveProbeEvent {
     pub timestamp: String,
 }
 
-static FETCH_ABORTS: OnceLock<Mutex<HashMap<String, oneshot::Sender<()>>>> = OnceLock::new();
-
-fn fetch_abort_cache() -> &'static Mutex<HashMap<String, oneshot::Sender<()>>> {
-    FETCH_ABORTS.get_or_init(|| Mutex::new(HashMap::new()))
-}
-
 pub fn cancel_plugin_fetch_requests_by_run(run_id: &str, reason: &str) -> usize {
     crate::runtime_events::suppress_monitor_progress_for_run(run_id);
 
@@ -321,28 +312,7 @@ pub fn cancel_plugin_fetch_requests_by_run(run_id: &str, reason: &str) -> usize 
         );
     }
 
-    let kinds = [
-        PluginFetchPolicyKind::BountyFetch,
-        PluginFetchPolicyKind::MonitorFetch,
-        PluginFetchPolicyKind::AgentFetch,
-        PluginFetchPolicyKind::TrafficActiveProbe,
-        PluginFetchPolicyKind::PluginTestFetch,
-    ];
-    let mut cancelled = 0usize;
-
-    for kind in kinds {
-        let request_ids =
-            crate::cancel_plugin_requests_by_run(kind, run_id, Some(reason.to_string()));
-        cancelled += request_ids.len();
-        for request_id in request_ids {
-            let sender = fetch_abort_cache().lock().unwrap().remove(&request_id);
-            if let Some(sender) = sender {
-                let _ = sender.send(());
-            }
-        }
-    }
-
-    cancelled
+    cancel_requests_by_run(run_id, Some(reason.to_string())).len()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

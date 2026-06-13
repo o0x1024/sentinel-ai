@@ -11,19 +11,9 @@ const ADAPTIVE_PENALTY_MAX_MS: u64 = 15_000;
 const RECENT_WINDOW_SECONDS: i64 = 60;
 const TERMINAL_SAMPLE_LIMIT: usize = 2_000;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum PluginFetchPolicyKind {
-    BountyFetch,
-    MonitorFetch,
-    AgentFetch,
-    TrafficActiveProbe,
-    PluginTestFetch,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PluginRequestPhase {
+pub enum ActiveProbeQueuePhase {
     Queued,
     Scheduled,
     Running,
@@ -40,7 +30,7 @@ enum TerminalSamplePhase {
 }
 
 #[derive(Debug, Clone)]
-pub struct PluginFetchPolicy {
+pub struct ActiveProbePolicy {
     pub max_queue_depth: usize,
     pub max_pending_per_run: usize,
     pub max_pending_per_plugin: usize,
@@ -53,99 +43,9 @@ pub struct PluginFetchPolicy {
     pub timeout_ms: u64,
 }
 
-impl PluginFetchPolicy {
-    pub fn for_kind(kind: PluginFetchPolicyKind) -> Self {
-        match kind {
-            PluginFetchPolicyKind::BountyFetch => Self {
-                max_queue_depth: 1_000,
-                max_pending_per_run: 250,
-                max_pending_per_plugin: 500,
-                max_global_concurrent: 16,
-                max_concurrent_per_host: 2,
-                max_concurrent_per_run: 16,
-                max_concurrent_per_plugin: 16,
-                min_host_delay_ms: 1_000,
-                jitter_range: [300, 1_000],
-                timeout_ms: 3_000,
-            },
-            PluginFetchPolicyKind::MonitorFetch => Self {
-                max_queue_depth: 5_000,
-                max_pending_per_run: 1_000,
-                max_pending_per_plugin: 2_000,
-                max_global_concurrent: 200,
-                max_concurrent_per_host: 20,
-                max_concurrent_per_run: 200,
-                max_concurrent_per_plugin: 200,
-                min_host_delay_ms: 50,
-                jitter_range: [0, 50],
-                timeout_ms: 8_000,
-            },
-            PluginFetchPolicyKind::AgentFetch => Self {
-                max_queue_depth: 300,
-                max_pending_per_run: 75,
-                max_pending_per_plugin: 150,
-                max_global_concurrent: 16,
-                max_concurrent_per_host: 2,
-                max_concurrent_per_run: 16,
-                max_concurrent_per_plugin: 16,
-                min_host_delay_ms: 500,
-                jitter_range: [100, 500],
-                timeout_ms: 3_000,
-            },
-            PluginFetchPolicyKind::TrafficActiveProbe => Self {
-                max_queue_depth: 1_000,
-                max_pending_per_run: 250,
-                max_pending_per_plugin: 500,
-                max_global_concurrent: 16,
-                max_concurrent_per_host: 2,
-                max_concurrent_per_run: 16,
-                max_concurrent_per_plugin: 16,
-                min_host_delay_ms: 1_000,
-                jitter_range: [300, 1_000],
-                timeout_ms: 3_000,
-            },
-            PluginFetchPolicyKind::PluginTestFetch => Self {
-                max_queue_depth: 50,
-                max_pending_per_run: 20,
-                max_pending_per_plugin: 30,
-                max_global_concurrent: 16,
-                max_concurrent_per_host: 1,
-                max_concurrent_per_run: 16,
-                max_concurrent_per_plugin: 16,
-                min_host_delay_ms: 100,
-                jitter_range: [0, 100],
-                timeout_ms: 3_000,
-            },
-        }
-    }
-}
-
-pub fn configured_policy_for_kind(kind: PluginFetchPolicyKind) -> PluginFetchPolicy {
-    let settings = get_plugin_runtime_settings();
-    match kind {
-        PluginFetchPolicyKind::TrafficActiveProbe => PluginFetchPolicy {
-            max_queue_depth: settings.active_probe.max_queue_depth as usize,
-            max_pending_per_run: settings.active_probe.max_pending_per_run as usize,
-            max_pending_per_plugin: settings.active_probe.max_pending_per_plugin as usize,
-            max_global_concurrent: settings.active_probe.max_global_concurrent as u32,
-            max_concurrent_per_host: settings.active_probe.max_concurrent_per_host as u32,
-            max_concurrent_per_run: settings.active_probe.max_concurrent_per_run as u32,
-            max_concurrent_per_plugin: settings.active_probe.max_concurrent_per_plugin as u32,
-            min_host_delay_ms: settings.active_probe.min_host_cooldown_ms,
-            jitter_range: settings.active_probe.jitter_range,
-            timeout_ms: settings.active_probe.timeout_ms,
-        },
-        PluginFetchPolicyKind::BountyFetch => map_runtime_policy(settings.bounty_fetch),
-        PluginFetchPolicyKind::MonitorFetch => map_runtime_policy(settings.monitor_fetch),
-        PluginFetchPolicyKind::AgentFetch => map_runtime_policy(settings.agent_fetch),
-        PluginFetchPolicyKind::PluginTestFetch => map_runtime_policy(settings.plugin_test_fetch),
-    }
-}
-
-fn map_runtime_policy(
-    settings: crate::runtime_config::PluginFetchRuntimeSettings,
-) -> PluginFetchPolicy {
-    PluginFetchPolicy {
+pub fn configured_active_probe_policy() -> ActiveProbePolicy {
+    let settings = get_plugin_runtime_settings().active_probe;
+    ActiveProbePolicy {
         max_queue_depth: settings.max_queue_depth as usize,
         max_pending_per_run: settings.max_pending_per_run as usize,
         max_pending_per_plugin: settings.max_pending_per_plugin as usize,
@@ -153,15 +53,14 @@ fn map_runtime_policy(
         max_concurrent_per_host: settings.max_concurrent_per_host as u32,
         max_concurrent_per_run: settings.max_concurrent_per_run as u32,
         max_concurrent_per_plugin: settings.max_concurrent_per_plugin as u32,
-        min_host_delay_ms: settings.min_host_delay_ms,
+        min_host_delay_ms: settings.min_host_cooldown_ms,
         jitter_range: settings.jitter_range,
         timeout_ms: settings.timeout_ms,
     }
 }
 
 #[derive(Debug, Clone)]
-pub struct PluginRequestScheduleRequest {
-    pub kind: PluginFetchPolicyKind,
+pub struct ActiveProbeScheduleRequest {
     pub request_id: String,
     pub run_id: String,
     pub plugin_id: String,
@@ -172,7 +71,7 @@ pub struct PluginRequestScheduleRequest {
 }
 
 #[derive(Debug, Clone)]
-pub struct PluginRequestDispatchGrant {
+pub struct ActiveProbeDispatchGrant {
     pub cooldown_wait_ms: u64,
     pub jitter_wait_ms: u64,
     pub total_wait_ms: u64,
@@ -184,13 +83,12 @@ pub struct PluginRequestDispatchGrant {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginRequestQueueEntry {
-    pub kind: PluginFetchPolicyKind,
+pub struct ActiveProbeQueueEntry {
     pub request_id: String,
     pub run_id: String,
     pub plugin_id: String,
     pub execution_context: String,
-    pub phase: PluginRequestPhase,
+    pub phase: ActiveProbeQueuePhase,
     pub method: String,
     pub url: String,
     pub host: String,
@@ -211,16 +109,15 @@ pub struct PluginRequestQueueEntry {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct PluginRequestQueueSnapshot {
-    pub pending: Vec<PluginRequestQueueEntry>,
-    pub running: Vec<PluginRequestQueueEntry>,
-    pub recent: Vec<PluginRequestQueueEntry>,
+pub struct ActiveProbeQueueSnapshot {
+    pub pending: Vec<ActiveProbeQueueEntry>,
+    pub running: Vec<ActiveProbeQueueEntry>,
+    pub recent: Vec<ActiveProbeQueueEntry>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-pub struct PluginRequestQueueStats {
-    pub kind: PluginFetchPolicyKind,
+pub struct ActiveProbeQueueStats {
     pub pending_count: u32,
     pub queued_count: u32,
     pub scheduled_count: u32,
@@ -270,9 +167,9 @@ struct TerminalSample {
 
 #[derive(Debug)]
 struct QueuedWaiter {
-    request: PluginRequestScheduleRequest,
+    request: ActiveProbeScheduleRequest,
     sequence: u64,
-    sender: Option<oneshot::Sender<Result<PluginRequestDispatchGrant, String>>>,
+    sender: Option<oneshot::Sender<Result<ActiveProbeDispatchGrant, String>>>,
 }
 
 #[derive(Debug, Default)]
@@ -283,8 +180,8 @@ struct HostState {
 }
 
 #[derive(Debug, Default)]
-struct PolicyState {
-    entries: HashMap<String, PluginRequestQueueEntry>,
+struct QueueState {
+    entries: HashMap<String, ActiveProbeQueueEntry>,
     waiters: Vec<QueuedWaiter>,
     run_order: VecDeque<String>,
     recent_ids: VecDeque<String>,
@@ -298,21 +195,16 @@ struct PolicyState {
     sequence: u64,
 }
 
-#[derive(Debug, Default)]
-struct SchedulerState {
-    policies: HashMap<PluginFetchPolicyKind, PolicyState>,
-}
-
 #[derive(Debug)]
 struct ScheduledWaiter {
-    grant: PluginRequestDispatchGrant,
-    sender: Option<oneshot::Sender<Result<PluginRequestDispatchGrant, String>>>,
+    grant: ActiveProbeDispatchGrant,
+    sender: Option<oneshot::Sender<Result<ActiveProbeDispatchGrant, String>>>,
 }
 
-static REQUEST_SCHEDULER: OnceLock<Mutex<SchedulerState>> = OnceLock::new();
+static ACTIVE_PROBE_QUEUE: OnceLock<Mutex<QueueState>> = OnceLock::new();
 
-fn scheduler_state() -> &'static Mutex<SchedulerState> {
-    REQUEST_SCHEDULER.get_or_init(|| Mutex::new(SchedulerState::default()))
+fn queue_state() -> &'static Mutex<QueueState> {
+    ACTIVE_PROBE_QUEUE.get_or_init(|| Mutex::new(QueueState::default()))
 }
 
 fn now_rfc3339() -> String {
@@ -340,22 +232,24 @@ fn jitter_ms(range: [u64; 2]) -> u64 {
     lower + (seed % span)
 }
 
-fn is_pending_phase(phase: PluginRequestPhase) -> bool {
+fn is_pending_phase(phase: ActiveProbeQueuePhase) -> bool {
     matches!(
         phase,
-        PluginRequestPhase::Queued | PluginRequestPhase::Scheduled | PluginRequestPhase::Running
+        ActiveProbeQueuePhase::Queued
+            | ActiveProbeQueuePhase::Scheduled
+            | ActiveProbeQueuePhase::Running
     )
 }
 
 fn pending_counts(
-    policy_state: &PolicyState,
+    state: &QueueState,
     run_id: &str,
     plugin_id: &str,
 ) -> (usize, usize, usize) {
     let mut total = 0;
     let mut run = 0;
     let mut plugin = 0;
-    for entry in policy_state.entries.values() {
+    for entry in state.entries.values() {
         if !is_pending_phase(entry.phase) {
             continue;
         }
@@ -375,24 +269,23 @@ fn active_count(map: &HashMap<String, u32>, key: &str) -> u32 {
 }
 
 fn can_schedule(
-    policy_state: &PolicyState,
-    policy: &PluginFetchPolicy,
-    request: &PluginRequestScheduleRequest,
+    state: &QueueState,
+    policy: &ActiveProbePolicy,
+    request: &ActiveProbeScheduleRequest,
 ) -> bool {
-    if policy_state.active_global >= policy.max_global_concurrent.max(1) {
+    if state.active_global >= policy.max_global_concurrent.max(1) {
         return false;
     }
-    if active_count(&policy_state.active_by_run, &request.run_id)
-        >= policy.max_concurrent_per_run.max(1)
+    if active_count(&state.active_by_run, &request.run_id) >= policy.max_concurrent_per_run.max(1)
     {
         return false;
     }
-    if active_count(&policy_state.active_by_plugin, &request.plugin_id)
+    if active_count(&state.active_by_plugin, &request.plugin_id)
         >= policy.max_concurrent_per_plugin.max(1)
     {
         return false;
     }
-    let host_active = policy_state
+    let host_active = state
         .hosts
         .get(&request.host)
         .map(|host| host.active_slots)
@@ -401,18 +294,17 @@ fn can_schedule(
 }
 
 fn build_entry(
-    request: &PluginRequestScheduleRequest,
+    request: &ActiveProbeScheduleRequest,
     adaptive_penalty_ms: u64,
     queue_depth: u32,
-) -> PluginRequestQueueEntry {
+) -> ActiveProbeQueueEntry {
     let now = now_rfc3339();
-    PluginRequestQueueEntry {
-        kind: request.kind,
+    ActiveProbeQueueEntry {
         request_id: request.request_id.clone(),
         run_id: request.run_id.clone(),
         plugin_id: request.plugin_id.clone(),
         execution_context: request.execution_context.clone(),
-        phase: PluginRequestPhase::Queued,
+        phase: ActiveProbeQueuePhase::Queued,
         method: request.method.clone(),
         url: request.url.clone(),
         host: request.host.clone(),
@@ -433,9 +325,9 @@ fn build_entry(
     }
 }
 
-fn refresh_queue_depths(policy_state: &mut PolicyState) {
+fn refresh_queue_depths(state: &mut QueueState) {
     let mut depths_by_run: HashMap<String, u32> = HashMap::new();
-    let mut queued: Vec<_> = policy_state
+    let mut queued: Vec<_> = state
         .waiters
         .iter()
         .map(|waiter| {
@@ -450,7 +342,7 @@ fn refresh_queue_depths(policy_state: &mut PolicyState) {
 
     for (_, request_id, run_id) in queued {
         let depth = depths_by_run.entry(run_id).or_insert(0);
-        if let Some(entry) = policy_state.entries.get_mut(&request_id) {
+        if let Some(entry) = state.entries.get_mut(&request_id) {
             entry.queue_depth = *depth;
             entry.updated_at = now_rfc3339();
         }
@@ -458,28 +350,28 @@ fn refresh_queue_depths(policy_state: &mut PolicyState) {
     }
 }
 
-fn apply_active_increment(policy_state: &mut PolicyState, request: &PluginRequestScheduleRequest) {
-    policy_state.active_global += 1;
-    *policy_state
+fn apply_active_increment(state: &mut QueueState, request: &ActiveProbeScheduleRequest) {
+    state.active_global += 1;
+    *state
         .active_by_run
         .entry(request.run_id.clone())
         .or_insert(0) += 1;
-    *policy_state
+    *state
         .active_by_plugin
         .entry(request.plugin_id.clone())
         .or_insert(0) += 1;
-    policy_state
+    state
         .hosts
         .entry(request.host.clone())
         .or_default()
         .active_slots += 1;
 }
 
-fn apply_active_decrement(policy_state: &mut PolicyState, entry: &PluginRequestQueueEntry) {
-    policy_state.active_global = policy_state.active_global.saturating_sub(1);
-    decrement_map(&mut policy_state.active_by_run, &entry.run_id);
-    decrement_map(&mut policy_state.active_by_plugin, &entry.plugin_id);
-    if let Some(host) = policy_state.hosts.get_mut(&entry.host) {
+fn apply_active_decrement(state: &mut QueueState, entry: &ActiveProbeQueueEntry) {
+    state.active_global = state.active_global.saturating_sub(1);
+    decrement_map(&mut state.active_by_run, &entry.run_id);
+    decrement_map(&mut state.active_by_plugin, &entry.plugin_id);
+    if let Some(host) = state.hosts.get_mut(&entry.host) {
         host.active_slots = host.active_slots.saturating_sub(1);
     }
 }
@@ -493,43 +385,43 @@ fn decrement_map(map: &mut HashMap<String, u32>, key: &str) {
     }
 }
 
-fn prune_recent(policy_state: &mut PolicyState) {
-    while policy_state.recent_ids.len() > RECENT_LIMIT {
-        let Some(oldest_id) = policy_state.recent_ids.pop_back() else {
+fn prune_recent(state: &mut QueueState) {
+    while state.recent_ids.len() > RECENT_LIMIT {
+        let Some(oldest_id) = state.recent_ids.pop_back() else {
             break;
         };
-        let can_remove = policy_state
+        let can_remove = state
             .entries
             .get(&oldest_id)
             .map(|entry| !is_pending_phase(entry.phase))
             .unwrap_or(false);
         if can_remove {
-            policy_state.entries.remove(&oldest_id);
+            state.entries.remove(&oldest_id);
         }
     }
 }
 
-fn enqueue_recent(policy_state: &mut PolicyState, request_id: &str) {
-    if let Some(position) = policy_state
+fn enqueue_recent(state: &mut QueueState, request_id: &str) {
+    if let Some(position) = state
         .recent_ids
         .iter()
         .position(|existing| existing == request_id)
     {
-        policy_state.recent_ids.remove(position);
+        state.recent_ids.remove(position);
     }
-    policy_state.recent_ids.push_front(request_id.to_string());
-    prune_recent(policy_state);
+    state.recent_ids.push_front(request_id.to_string());
+    prune_recent(state);
 }
 
-fn enqueue_terminal_sample(policy_state: &mut PolicyState, entry: &PluginRequestQueueEntry) {
+fn enqueue_terminal_sample(state: &mut QueueState, entry: &ActiveProbeQueueEntry) {
     let Some(finished_at) = entry.finished_at.as_deref().and_then(parse_rfc3339) else {
         return;
     };
 
     let phase = match entry.phase {
-        PluginRequestPhase::Completed => TerminalSamplePhase::Completed,
-        PluginRequestPhase::Failed => TerminalSamplePhase::Failed,
-        PluginRequestPhase::Cancelled => TerminalSamplePhase::Cancelled,
+        ActiveProbeQueuePhase::Completed => TerminalSamplePhase::Completed,
+        ActiveProbeQueuePhase::Failed => TerminalSamplePhase::Failed,
+        ActiveProbeQueuePhase::Cancelled => TerminalSamplePhase::Cancelled,
         _ => return,
     };
 
@@ -543,24 +435,22 @@ fn enqueue_terminal_sample(policy_state: &mut PolicyState, entry: &PluginRequest
         _ => None,
     };
 
-    policy_state.terminal_samples.push_back(TerminalSample {
+    state.terminal_samples.push_back(TerminalSample {
         finished_at,
         phase,
         queue_wait_ms,
         response_elapsed_ms: entry.response_elapsed_ms,
     });
-    prune_terminal_samples(policy_state, Utc::now());
+    prune_terminal_samples(state, Utc::now());
 }
 
-fn prune_terminal_samples(policy_state: &mut PolicyState, now: DateTime<Utc>) {
+fn prune_terminal_samples(state: &mut QueueState, now: DateTime<Utc>) {
     let cutoff = now - chrono::Duration::seconds(RECENT_WINDOW_SECONDS);
-    while let Some(sample) = policy_state.terminal_samples.front() {
-        if sample.finished_at >= cutoff
-            && policy_state.terminal_samples.len() <= TERMINAL_SAMPLE_LIMIT
-        {
+    while let Some(sample) = state.terminal_samples.front() {
+        if sample.finished_at >= cutoff && state.terminal_samples.len() <= TERMINAL_SAMPLE_LIMIT {
             break;
         }
-        policy_state.terminal_samples.pop_front();
+        state.terminal_samples.pop_front();
     }
 }
 
@@ -599,38 +489,38 @@ fn adjust_penalty(
 }
 
 fn promote_waiters_locked(
-    policy_state: &mut PolicyState,
-    policy: &PluginFetchPolicy,
+    state: &mut QueueState,
+    policy: &ActiveProbePolicy,
 ) -> Vec<ScheduledWaiter> {
     let mut scheduled = Vec::new();
-    if policy_state.waiters.is_empty() {
+    if state.waiters.is_empty() {
         return scheduled;
     }
 
     loop {
-        let run_count = policy_state.run_order.len();
+        let run_count = state.run_order.len();
         if run_count == 0 {
             break;
         }
 
         let mut selected: Option<(usize, String)> = None;
         for _ in 0..run_count {
-            let Some(run_id) = policy_state.run_order.pop_front() else {
+            let Some(run_id) = state.run_order.pop_front() else {
                 break;
             };
-            let candidate_index = policy_state
+            let candidate_index = state
                 .waiters
                 .iter()
                 .position(|waiter| waiter.request.run_id == run_id);
             let should_keep_run = candidate_index.is_some();
             if let Some(index) = candidate_index {
-                if can_schedule(policy_state, policy, &policy_state.waiters[index].request) {
+                if can_schedule(state, policy, &state.waiters[index].request) {
                     selected = Some((index, run_id.clone()));
                     break;
                 }
             }
             if should_keep_run {
-                policy_state.run_order.push_back(run_id);
+                state.run_order.push_back(run_id);
             }
         }
 
@@ -638,21 +528,18 @@ fn promote_waiters_locked(
             break;
         };
 
-        let mut waiter = policy_state.waiters.remove(index);
-        if policy_state
+        let mut waiter = state.waiters.remove(index);
+        if state
             .waiters
             .iter()
             .any(|queued| queued.request.run_id == run_id)
         {
-            policy_state.run_order.push_back(run_id);
+            state.run_order.push_back(run_id);
         }
 
         let now = Utc::now();
         let (cooldown_wait_ms, jitter_wait_ms, total_wait_ms, adaptive_penalty_ms) = {
-            let host = policy_state
-                .hosts
-                .entry(waiter.request.host.clone())
-                .or_default();
+            let host = state.hosts.entry(waiter.request.host.clone()).or_default();
             let next_dispatch_at = host.next_dispatch_at.unwrap_or(now);
             let cooldown_wait_ms = next_dispatch_at
                 .signed_duration_since(now)
@@ -674,29 +561,26 @@ fn promote_waiters_locked(
             )
         };
 
-        apply_active_increment(policy_state, &waiter.request);
+        apply_active_increment(state, &waiter.request);
 
-        let grant = PluginRequestDispatchGrant {
+        let grant = ActiveProbeDispatchGrant {
             cooldown_wait_ms,
             jitter_wait_ms,
             total_wait_ms,
             timeout_ms: policy.timeout_ms,
-            active_global: policy_state.active_global,
-            active_for_host: policy_state
+            active_global: state.active_global,
+            active_for_host: state
                 .hosts
                 .get(&waiter.request.host)
                 .map(|host| host.active_slots)
                 .unwrap_or(0),
-            active_for_run: active_count(&policy_state.active_by_run, &waiter.request.run_id),
-            active_for_plugin: active_count(
-                &policy_state.active_by_plugin,
-                &waiter.request.plugin_id,
-            ),
+            active_for_run: active_count(&state.active_by_run, &waiter.request.run_id),
+            active_for_plugin: active_count(&state.active_by_plugin, &waiter.request.plugin_id),
         };
 
         let scheduled_at = now_rfc3339();
-        if let Some(entry) = policy_state.entries.get_mut(&waiter.request.request_id) {
-            entry.phase = PluginRequestPhase::Scheduled;
+        if let Some(entry) = state.entries.get_mut(&waiter.request.request_id) {
+            entry.phase = ActiveProbeQueuePhase::Scheduled;
             entry.cooldown_wait_ms = Some(cooldown_wait_ms);
             entry.jitter_wait_ms = Some(jitter_wait_ms);
             entry.total_wait_ms = Some(total_wait_ms);
@@ -711,98 +595,93 @@ fn promote_waiters_locked(
         });
     }
 
-    refresh_queue_depths(policy_state);
+    refresh_queue_depths(state);
     scheduled
 }
 
-pub fn enqueue_plugin_request(
-    request: PluginRequestScheduleRequest,
-    policy: PluginFetchPolicy,
-) -> Result<oneshot::Receiver<Result<PluginRequestDispatchGrant, String>>, String> {
+fn dispatch_scheduled(waiters: Vec<ScheduledWaiter>) {
+    for waiter in waiters {
+        if let Some(sender) = waiter.sender {
+            let _ = sender.send(Ok(waiter.grant));
+        }
+    }
+}
+
+pub fn enqueue_request(
+    request: ActiveProbeScheduleRequest,
+    policy: ActiveProbePolicy,
+) -> Result<oneshot::Receiver<Result<ActiveProbeDispatchGrant, String>>, String> {
     let (tx, rx) = oneshot::channel();
-    let mut state = scheduler_state()
+    let mut state = queue_state()
         .lock()
-        .expect("plugin request scheduler poisoned");
-    let policy_state = state.policies.entry(request.kind).or_default();
-    if policy_state.cancelled_runs.contains(&request.run_id) {
-        policy_state.rejection_stats.cancelled_run =
-            policy_state.rejection_stats.cancelled_run.saturating_add(1);
-        return Err("Plugin request run has been cancelled".to_string());
+        .expect("active probe queue poisoned");
+    if state.cancelled_runs.contains(&request.run_id) {
+        state.rejection_stats.cancelled_run =
+            state.rejection_stats.cancelled_run.saturating_add(1);
+        return Err("Active probe run has been cancelled".to_string());
     }
     let (total_pending, run_pending, plugin_pending) =
-        pending_counts(policy_state, &request.run_id, &request.plugin_id);
+        pending_counts(&state, &request.run_id, &request.plugin_id);
 
     if total_pending >= policy.max_queue_depth {
-        policy_state.rejection_stats.queue_limit =
-            policy_state.rejection_stats.queue_limit.saturating_add(1);
-        return Err("Plugin request queue limit exceeded".to_string());
+        state.rejection_stats.queue_limit = state.rejection_stats.queue_limit.saturating_add(1);
+        return Err("Active probe queue limit exceeded".to_string());
     }
     if run_pending >= policy.max_pending_per_run {
-        policy_state.rejection_stats.run_pending_limit = policy_state
+        state.rejection_stats.run_pending_limit = state
             .rejection_stats
             .run_pending_limit
             .saturating_add(1);
-        return Err("Plugin request run pending limit exceeded".to_string());
+        return Err("Active probe run pending limit exceeded".to_string());
     }
     if plugin_pending >= policy.max_pending_per_plugin {
-        policy_state.rejection_stats.plugin_pending_limit = policy_state
+        state.rejection_stats.plugin_pending_limit = state
             .rejection_stats
             .plugin_pending_limit
             .saturating_add(1);
-        return Err("Plugin request plugin pending limit exceeded".to_string());
+        return Err("Active probe plugin pending limit exceeded".to_string());
     }
 
-    let queue_depth = policy_state.waiters.len() as u32;
-    let adaptive_penalty_ms = policy_state
+    let queue_depth = state.waiters.len() as u32;
+    let adaptive_penalty_ms = state
         .hosts
         .get(&request.host)
         .map(|host| host.adaptive_penalty_ms)
         .unwrap_or(0);
     let entry = build_entry(&request, adaptive_penalty_ms, queue_depth);
-    policy_state
-        .entries
-        .insert(request.request_id.clone(), entry);
+    state.entries.insert(request.request_id.clone(), entry);
 
-    let sequence = policy_state.sequence;
-    policy_state.sequence += 1;
-    if !policy_state
+    let sequence = state.sequence;
+    state.sequence += 1;
+    if !state
         .run_order
         .iter()
         .any(|existing| existing == &request.run_id)
     {
-        policy_state.run_order.push_back(request.run_id.clone());
+        state.run_order.push_back(request.run_id.clone());
     }
-    policy_state.waiters.push(QueuedWaiter {
+    state.waiters.push(QueuedWaiter {
         request,
         sequence,
         sender: Some(tx),
     });
 
-    let scheduled = promote_waiters_locked(policy_state, &policy);
+    let scheduled = promote_waiters_locked(&mut state, &policy);
     drop(state);
-
-    for waiter in scheduled {
-        if let Some(sender) = waiter.sender {
-            let _ = sender.send(Ok(waiter.grant));
-        }
-    }
+    dispatch_scheduled(scheduled);
 
     Ok(rx)
 }
 
-pub fn mark_plugin_request_running(
-    kind: PluginFetchPolicyKind,
-    request_id: &str,
-) -> Option<PluginRequestQueueEntry> {
-    let mut state = scheduler_state()
+pub fn mark_request_running(request_id: &str) -> Option<ActiveProbeQueueEntry> {
+    let mut state = queue_state()
         .lock()
-        .expect("plugin request scheduler poisoned");
-    let policy_state = state.policies.get_mut(&kind)?;
-    let entry = policy_state.entries.get_mut(request_id)?;
-    if entry.phase == PluginRequestPhase::Cancelled {
+        .expect("active probe queue poisoned");
+    let entry = state.entries.get_mut(request_id)?;
+    if entry.phase == ActiveProbeQueuePhase::Cancelled {
         return None;
     }
-    entry.phase = PluginRequestPhase::Running;
+    entry.phase = ActiveProbeQueuePhase::Running;
     entry.dispatch_started_at = Some(now_rfc3339());
     entry.updated_at = entry
         .dispatch_started_at
@@ -811,30 +690,28 @@ pub fn mark_plugin_request_running(
     Some(entry.clone())
 }
 
-fn finalize_plugin_request(
-    kind: PluginFetchPolicyKind,
+fn finalize_request(
     request_id: &str,
-    phase: PluginRequestPhase,
+    phase: ActiveProbeQueuePhase,
     status: Option<u16>,
     error: Option<String>,
     reason: Option<String>,
     response_elapsed_ms: Option<u64>,
-) -> Option<PluginRequestQueueEntry> {
-    let policy = configured_policy_for_kind(kind);
-    let mut state = scheduler_state()
+) -> Option<ActiveProbeQueueEntry> {
+    let policy = configured_active_probe_policy();
+    let mut state = queue_state()
         .lock()
-        .expect("plugin request scheduler poisoned");
-    let policy_state = state.policies.get_mut(&kind)?;
-    let mut entry = policy_state.entries.get(request_id)?.clone();
+        .expect("active probe queue poisoned");
+    let mut entry = state.entries.get(request_id)?.clone();
 
     if matches!(
         entry.phase,
-        PluginRequestPhase::Scheduled | PluginRequestPhase::Running
+        ActiveProbeQueuePhase::Scheduled | ActiveProbeQueuePhase::Running
     ) {
-        apply_active_decrement(policy_state, &entry);
+        apply_active_decrement(&mut state, &entry);
     }
 
-    if let Some(host) = policy_state.hosts.get_mut(&entry.host) {
+    if let Some(host) = state.hosts.get_mut(&entry.host) {
         adjust_penalty(host, status, error.as_deref(), response_elapsed_ms);
         entry.adaptive_penalty_ms = host.adaptive_penalty_ms;
     }
@@ -847,33 +724,24 @@ fn finalize_plugin_request(
     entry.response_elapsed_ms = response_elapsed_ms;
     entry.finished_at = Some(now.clone());
     entry.updated_at = now;
-    policy_state
-        .entries
-        .insert(request_id.to_string(), entry.clone());
-    enqueue_recent(policy_state, request_id);
-    enqueue_terminal_sample(policy_state, &entry);
-    let scheduled = promote_waiters_locked(policy_state, &policy);
+    state.entries.insert(request_id.to_string(), entry.clone());
+    enqueue_recent(&mut state, request_id);
+    enqueue_terminal_sample(&mut state, &entry);
+    let scheduled = promote_waiters_locked(&mut state, &policy);
     drop(state);
-
-    for waiter in scheduled {
-        if let Some(sender) = waiter.sender {
-            let _ = sender.send(Ok(waiter.grant));
-        }
-    }
+    dispatch_scheduled(scheduled);
 
     Some(entry)
 }
 
-pub fn complete_plugin_request(
-    kind: PluginFetchPolicyKind,
+pub fn complete_request(
     request_id: &str,
     status: Option<u16>,
     response_elapsed_ms: Option<u64>,
-) -> Option<PluginRequestQueueEntry> {
-    finalize_plugin_request(
-        kind,
+) -> Option<ActiveProbeQueueEntry> {
+    finalize_request(
         request_id,
-        PluginRequestPhase::Completed,
+        ActiveProbeQueuePhase::Completed,
         status,
         None,
         None,
@@ -881,17 +749,15 @@ pub fn complete_plugin_request(
     )
 }
 
-pub fn fail_plugin_request(
-    kind: PluginFetchPolicyKind,
+pub fn fail_request(
     request_id: &str,
     status: Option<u16>,
     error: Option<String>,
     response_elapsed_ms: Option<u64>,
-) -> Option<PluginRequestQueueEntry> {
-    finalize_plugin_request(
-        kind,
+) -> Option<ActiveProbeQueueEntry> {
+    finalize_request(
         request_id,
-        PluginRequestPhase::Failed,
+        ActiveProbeQueuePhase::Failed,
         status,
         error,
         None,
@@ -899,23 +765,21 @@ pub fn fail_plugin_request(
     )
 }
 
-pub fn cancel_plugin_request(
-    kind: PluginFetchPolicyKind,
+pub fn cancel_request(
     request_id: &str,
     reason: Option<String>,
-) -> Option<PluginRequestQueueEntry> {
-    let policy = configured_policy_for_kind(kind);
-    let mut state = scheduler_state()
+) -> Option<ActiveProbeQueueEntry> {
+    let policy = configured_active_probe_policy();
+    let mut state = queue_state()
         .lock()
-        .expect("plugin request scheduler poisoned");
-    let policy_state = state.policies.get_mut(&kind)?;
+        .expect("active probe queue poisoned");
 
-    if let Some(position) = policy_state
+    if let Some(position) = state
         .waiters
         .iter()
         .position(|waiter| waiter.request.request_id == request_id)
     {
-        let mut waiter = policy_state.waiters.remove(position);
+        let mut waiter = state.waiters.remove(position);
         if let Some(sender) = waiter.sender.take() {
             let _ = sender.send(Err(reason
                 .clone()
@@ -923,51 +787,39 @@ pub fn cancel_plugin_request(
         }
     }
 
-    let mut entry = policy_state.entries.get(request_id)?.clone();
+    let mut entry = state.entries.get(request_id)?.clone();
     if matches!(
         entry.phase,
-        PluginRequestPhase::Scheduled | PluginRequestPhase::Running
+        ActiveProbeQueuePhase::Scheduled | ActiveProbeQueuePhase::Running
     ) {
-        apply_active_decrement(policy_state, &entry);
+        apply_active_decrement(&mut state, &entry);
     }
 
     let now = now_rfc3339();
-    entry.phase = PluginRequestPhase::Cancelled;
+    entry.phase = ActiveProbeQueuePhase::Cancelled;
     entry.reason = reason;
     entry.finished_at = Some(now.clone());
     entry.updated_at = now;
-    policy_state
-        .entries
-        .insert(request_id.to_string(), entry.clone());
-    enqueue_recent(policy_state, request_id);
-    enqueue_terminal_sample(policy_state, &entry);
-    refresh_queue_depths(policy_state);
-    let scheduled = promote_waiters_locked(policy_state, &policy);
+    state.entries.insert(request_id.to_string(), entry.clone());
+    enqueue_recent(&mut state, request_id);
+    enqueue_terminal_sample(&mut state, &entry);
+    refresh_queue_depths(&mut state);
+    let scheduled = promote_waiters_locked(&mut state, &policy);
     drop(state);
-
-    for waiter in scheduled {
-        if let Some(sender) = waiter.sender {
-            let _ = sender.send(Ok(waiter.grant));
-        }
-    }
+    dispatch_scheduled(scheduled);
 
     Some(entry)
 }
 
-pub fn cancel_plugin_requests_by_run(
-    kind: PluginFetchPolicyKind,
-    run_id: &str,
-    reason: Option<String>,
-) -> Vec<String> {
-    let policy = configured_policy_for_kind(kind);
+pub fn cancel_requests_by_run(run_id: &str, reason: Option<String>) -> Vec<String> {
+    let policy = configured_active_probe_policy();
     let mut cancelled_senders = Vec::new();
-    let mut state = scheduler_state()
+    let mut state = queue_state()
         .lock()
-        .expect("plugin request scheduler poisoned");
-    let policy_state = state.policies.entry(kind).or_default();
-    policy_state.cancelled_runs.insert(run_id.to_string());
+        .expect("active probe queue poisoned");
+    state.cancelled_runs.insert(run_id.to_string());
 
-    let request_ids = policy_state
+    let request_ids = state
         .entries
         .values()
         .filter(|entry| entry.run_id == run_id && is_pending_phase(entry.phase))
@@ -975,9 +827,9 @@ pub fn cancel_plugin_requests_by_run(
         .collect::<Vec<_>>();
 
     let mut index = 0;
-    while index < policy_state.waiters.len() {
-        if policy_state.waiters[index].request.run_id == run_id {
-            let mut waiter = policy_state.waiters.remove(index);
+    while index < state.waiters.len() {
+        if state.waiters[index].request.run_id == run_id {
+            let mut waiter = state.waiters.remove(index);
             if let Some(sender) = waiter.sender.take() {
                 cancelled_senders.push(sender);
             }
@@ -987,127 +839,113 @@ pub fn cancel_plugin_requests_by_run(
     }
 
     for request_id in &request_ids {
-        let Some(mut entry) = policy_state.entries.get(request_id).cloned() else {
+        let Some(mut entry) = state.entries.get(request_id).cloned() else {
             continue;
         };
         if matches!(
             entry.phase,
-            PluginRequestPhase::Scheduled | PluginRequestPhase::Running
+            ActiveProbeQueuePhase::Scheduled | ActiveProbeQueuePhase::Running
         ) {
-            apply_active_decrement(policy_state, &entry);
+            apply_active_decrement(&mut state, &entry);
         }
 
         let now = now_rfc3339();
-        entry.phase = PluginRequestPhase::Cancelled;
+        entry.phase = ActiveProbeQueuePhase::Cancelled;
         entry.reason = reason.clone();
         entry.finished_at = Some(now.clone());
         entry.updated_at = now;
-        policy_state
-            .entries
-            .insert(request_id.clone(), entry.clone());
-        enqueue_recent(policy_state, request_id);
-        enqueue_terminal_sample(policy_state, &entry);
+        state.entries.insert(request_id.clone(), entry.clone());
+        enqueue_recent(&mut state, request_id);
+        enqueue_terminal_sample(&mut state, &entry);
     }
 
-    refresh_queue_depths(policy_state);
-    let scheduled = promote_waiters_locked(policy_state, &policy);
+    refresh_queue_depths(&mut state);
+    let scheduled = promote_waiters_locked(&mut state, &policy);
     drop(state);
 
     let message = reason.unwrap_or_else(|| "HTTP request cancelled".to_string());
     for sender in cancelled_senders {
         let _ = sender.send(Err(message.clone()));
     }
-    for waiter in scheduled {
-        if let Some(sender) = waiter.sender {
-            let _ = sender.send(Ok(waiter.grant));
-        }
-    }
+    dispatch_scheduled(scheduled);
 
     request_ids
 }
 
-pub fn get_plugin_request_queue_snapshot(
-    kind: PluginFetchPolicyKind,
-) -> PluginRequestQueueSnapshot {
-    let state = scheduler_state()
+pub fn get_queue_snapshot() -> ActiveProbeQueueSnapshot {
+    let state = queue_state()
         .lock()
-        .expect("plugin request scheduler poisoned");
-    let Some(policy_state) = state.policies.get(&kind) else {
-        return PluginRequestQueueSnapshot {
-            pending: Vec::new(),
-            running: Vec::new(),
-            recent: Vec::new(),
-        };
-    };
+        .expect("active probe queue poisoned");
 
     let mut pending = Vec::new();
     let mut running = Vec::new();
-    for entry in policy_state.entries.values() {
+    for entry in state.entries.values() {
         match entry.phase {
-            PluginRequestPhase::Queued | PluginRequestPhase::Scheduled => {
+            ActiveProbeQueuePhase::Queued | ActiveProbeQueuePhase::Scheduled => {
                 pending.push(entry.clone())
             }
-            PluginRequestPhase::Running => running.push(entry.clone()),
+            ActiveProbeQueuePhase::Running => running.push(entry.clone()),
             _ => {}
         }
     }
 
     pending.sort_by(|left, right| left.queued_at.cmp(&right.queued_at));
     running.sort_by(|left, right| left.updated_at.cmp(&right.updated_at));
-    let recent = policy_state
+    let recent = state
         .recent_ids
         .iter()
-        .filter_map(|request_id| policy_state.entries.get(request_id).cloned())
+        .filter_map(|request_id| state.entries.get(request_id).cloned())
         .collect();
 
-    PluginRequestQueueSnapshot {
+    ActiveProbeQueueSnapshot {
         pending,
         running,
         recent,
     }
 }
 
-pub fn get_plugin_request_queue_stats(kind: PluginFetchPolicyKind) -> PluginRequestQueueStats {
-    let policy = configured_policy_for_kind(kind);
-    let mut state = scheduler_state()
+#[cfg(test)]
+fn empty_stats(policy: &ActiveProbePolicy) -> ActiveProbeQueueStats {
+    ActiveProbeQueueStats {
+        pending_count: 0,
+        queued_count: 0,
+        scheduled_count: 0,
+        running_count: 0,
+        recent_count: 0,
+        max_queue_depth: 0,
+        active_global: 0,
+        active_runs: 0,
+        active_plugins: 0,
+        active_hosts: 0,
+        hottest_host: None,
+        hottest_host_active: 0,
+        cancelled_run_count: 0,
+        configured_max_queue_depth: policy.max_queue_depth as u32,
+        configured_max_global_concurrent: policy.max_global_concurrent,
+        configured_max_concurrent_per_host: policy.max_concurrent_per_host,
+        configured_max_concurrent_per_run: policy.max_concurrent_per_run,
+        configured_max_concurrent_per_plugin: policy.max_concurrent_per_plugin,
+        rejected_total_count: 0,
+        rejected_cancelled_run_count: 0,
+        rejected_queue_limit_count: 0,
+        rejected_run_pending_limit_count: 0,
+        rejected_plugin_pending_limit_count: 0,
+        recent_window_total_count: 0,
+        recent_window_completed_count: 0,
+        recent_window_failed_count: 0,
+        recent_window_cancelled_count: 0,
+        recent_window_avg_queue_wait_ms: 0,
+        recent_window_avg_response_elapsed_ms: 0,
+    }
+}
+
+pub fn get_queue_stats() -> ActiveProbeQueueStats {
+    let policy = configured_active_probe_policy();
+    let mut state = queue_state()
         .lock()
-        .expect("plugin request scheduler poisoned");
-    let Some(policy_state) = state.policies.get_mut(&kind) else {
-        return PluginRequestQueueStats {
-            kind,
-            pending_count: 0,
-            queued_count: 0,
-            scheduled_count: 0,
-            running_count: 0,
-            recent_count: 0,
-            max_queue_depth: 0,
-            active_global: 0,
-            active_runs: 0,
-            active_plugins: 0,
-            active_hosts: 0,
-            hottest_host: None,
-            hottest_host_active: 0,
-            cancelled_run_count: 0,
-            configured_max_queue_depth: policy.max_queue_depth as u32,
-            configured_max_global_concurrent: policy.max_global_concurrent,
-            configured_max_concurrent_per_host: policy.max_concurrent_per_host,
-            configured_max_concurrent_per_run: policy.max_concurrent_per_run,
-            configured_max_concurrent_per_plugin: policy.max_concurrent_per_plugin,
-            rejected_total_count: 0,
-            rejected_cancelled_run_count: 0,
-            rejected_queue_limit_count: 0,
-            rejected_run_pending_limit_count: 0,
-            rejected_plugin_pending_limit_count: 0,
-            recent_window_total_count: 0,
-            recent_window_completed_count: 0,
-            recent_window_failed_count: 0,
-            recent_window_cancelled_count: 0,
-            recent_window_avg_queue_wait_ms: 0,
-            recent_window_avg_response_elapsed_ms: 0,
-        };
-    };
+        .expect("active probe queue poisoned");
     let now = Utc::now();
-    prune_terminal_samples(policy_state, now);
+    prune_terminal_samples(&mut state, now);
 
     let mut queued_count = 0u32;
     let mut scheduled_count = 0u32;
@@ -1115,22 +953,22 @@ pub fn get_plugin_request_queue_stats(kind: PluginFetchPolicyKind) -> PluginRequ
     let mut recent_count = 0u32;
     let mut max_queue_depth = 0u32;
 
-    for entry in policy_state.entries.values() {
+    for entry in state.entries.values() {
         match entry.phase {
-            PluginRequestPhase::Queued => {
+            ActiveProbeQueuePhase::Queued => {
                 queued_count += 1;
                 max_queue_depth = max_queue_depth.max(entry.queue_depth.saturating_add(1));
             }
-            PluginRequestPhase::Scheduled => {
+            ActiveProbeQueuePhase::Scheduled => {
                 scheduled_count += 1;
                 max_queue_depth = max_queue_depth.max(entry.queue_depth.saturating_add(1));
             }
-            PluginRequestPhase::Running => {
+            ActiveProbeQueuePhase::Running => {
                 running_count += 1;
             }
-            PluginRequestPhase::Completed
-            | PluginRequestPhase::Failed
-            | PluginRequestPhase::Cancelled => {
+            ActiveProbeQueuePhase::Completed
+            | ActiveProbeQueuePhase::Failed
+            | ActiveProbeQueuePhase::Cancelled => {
                 recent_count += 1;
             }
         }
@@ -1138,15 +976,15 @@ pub fn get_plugin_request_queue_stats(kind: PluginFetchPolicyKind) -> PluginRequ
 
     let mut hottest_host = None;
     let mut hottest_host_active = 0u32;
-    let active_hosts = policy_state
+    let active_hosts = state
         .hosts
         .iter()
-        .filter_map(|(host, state)| {
-            if state.active_slots == 0 {
+        .filter_map(|(host, host_state)| {
+            if host_state.active_slots == 0 {
                 return None;
             }
-            if state.active_slots > hottest_host_active {
-                hottest_host_active = state.active_slots;
+            if host_state.active_slots > hottest_host_active {
+                hottest_host_active = host_state.active_slots;
                 hottest_host = Some(host.clone());
             }
             Some(host)
@@ -1163,7 +1001,7 @@ pub fn get_plugin_request_queue_stats(kind: PluginFetchPolicyKind) -> PluginRequ
     let mut response_elapsed_total_ms = 0u64;
     let mut response_elapsed_sample_count = 0u64;
 
-    for sample in &policy_state.terminal_samples {
+    for sample in &state.terminal_samples {
         if sample.finished_at < cutoff {
             continue;
         }
@@ -1190,36 +1028,35 @@ pub fn get_plugin_request_queue_stats(kind: PluginFetchPolicyKind) -> PluginRequ
         }
     }
 
-    PluginRequestQueueStats {
-        kind,
+    ActiveProbeQueueStats {
         pending_count: queued_count + scheduled_count,
         queued_count,
         scheduled_count,
         running_count,
         recent_count,
         max_queue_depth,
-        active_global: policy_state.active_global,
-        active_runs: policy_state.active_by_run.len() as u32,
-        active_plugins: policy_state.active_by_plugin.len() as u32,
+        active_global: state.active_global,
+        active_runs: state.active_by_run.len() as u32,
+        active_plugins: state.active_by_plugin.len() as u32,
         active_hosts,
         hottest_host,
         hottest_host_active,
-        cancelled_run_count: policy_state.cancelled_runs.len() as u32,
+        cancelled_run_count: state.cancelled_runs.len() as u32,
         configured_max_queue_depth: policy.max_queue_depth as u32,
         configured_max_global_concurrent: policy.max_global_concurrent,
         configured_max_concurrent_per_host: policy.max_concurrent_per_host,
         configured_max_concurrent_per_run: policy.max_concurrent_per_run,
         configured_max_concurrent_per_plugin: policy.max_concurrent_per_plugin,
-        rejected_total_count: policy_state
+        rejected_total_count: state
             .rejection_stats
             .cancelled_run
-            .saturating_add(policy_state.rejection_stats.queue_limit)
-            .saturating_add(policy_state.rejection_stats.run_pending_limit)
-            .saturating_add(policy_state.rejection_stats.plugin_pending_limit),
-        rejected_cancelled_run_count: policy_state.rejection_stats.cancelled_run,
-        rejected_queue_limit_count: policy_state.rejection_stats.queue_limit,
-        rejected_run_pending_limit_count: policy_state.rejection_stats.run_pending_limit,
-        rejected_plugin_pending_limit_count: policy_state.rejection_stats.plugin_pending_limit,
+            .saturating_add(state.rejection_stats.queue_limit)
+            .saturating_add(state.rejection_stats.run_pending_limit)
+            .saturating_add(state.rejection_stats.plugin_pending_limit),
+        rejected_cancelled_run_count: state.rejection_stats.cancelled_run,
+        rejected_queue_limit_count: state.rejection_stats.queue_limit,
+        rejected_run_pending_limit_count: state.rejection_stats.run_pending_limit,
+        rejected_plugin_pending_limit_count: state.rejection_stats.plugin_pending_limit,
         recent_window_total_count,
         recent_window_completed_count,
         recent_window_failed_count,
@@ -1241,27 +1078,20 @@ pub fn get_plugin_request_queue_stats(kind: PluginFetchPolicyKind) -> PluginRequ
 mod tests {
     use super::*;
 
-    fn request(
-        kind: PluginFetchPolicyKind,
-        id: &str,
-        run_id: &str,
-        plugin_id: &str,
-        host: &str,
-    ) -> PluginRequestScheduleRequest {
-        PluginRequestScheduleRequest {
-            kind,
+    fn request(id: &str, run_id: &str, plugin_id: &str, host: &str) -> ActiveProbeScheduleRequest {
+        ActiveProbeScheduleRequest {
             request_id: id.to_string(),
             run_id: run_id.to_string(),
             plugin_id: plugin_id.to_string(),
-            execution_context: "plugin_test".to_string(),
+            execution_context: "active_probe".to_string(),
             method: "GET".to_string(),
             url: format!("https://{host}/{id}"),
             host: host.to_string(),
         }
     }
 
-    fn test_policy() -> PluginFetchPolicy {
-        PluginFetchPolicy {
+    fn test_policy() -> ActiveProbePolicy {
+        ActiveProbePolicy {
             max_queue_depth: 10,
             max_pending_per_run: 4,
             max_pending_per_plugin: 10,
@@ -1277,44 +1107,25 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_run_pending_limit_before_enqueue() {
-        let kind = PluginFetchPolicyKind::PluginTestFetch;
-        let policy = PluginFetchPolicy {
+        let policy = ActiveProbePolicy {
             max_pending_per_run: 1,
             max_global_concurrent: 0,
             ..test_policy()
         };
-        let _ = enqueue_plugin_request(
-            request(kind, "limit-run-1", "limit-run", "p", "a.test"),
-            policy.clone(),
-        )
-        .expect("first request should enqueue");
-        let error = enqueue_plugin_request(
-            request(kind, "limit-run-2", "limit-run", "p", "b.test"),
-            policy,
-        )
-        .expect_err("second request should exceed run pending limit");
+        let _ = enqueue_request(request("limit-run-1", "limit-run", "p", "a.test"), policy.clone())
+            .expect("first request should enqueue");
+        let error = enqueue_request(request("limit-run-2", "limit-run", "p", "b.test"), policy)
+            .expect_err("second request should exceed run pending limit");
         assert!(error.contains("run pending limit"));
     }
 
     #[tokio::test]
     async fn dispatches_round_robin_by_run() {
-        let kind = PluginFetchPolicyKind::AgentFetch;
         let policy = test_policy();
-        let rx1 = enqueue_plugin_request(
-            request(kind, "rr-1", "run-a", "p", "a.test"),
-            policy.clone(),
-        )
-        .unwrap();
-        let mut rx2 = enqueue_plugin_request(
-            request(kind, "rr-2", "run-a", "p", "b.test"),
-            policy.clone(),
-        )
-        .unwrap();
-        let rx3 = enqueue_plugin_request(
-            request(kind, "rr-3", "run-b", "p", "c.test"),
-            policy.clone(),
-        )
-        .unwrap();
+        let rx1 = enqueue_request(request("rr-1", "run-a", "p", "a.test"), policy.clone()).unwrap();
+        let mut rx2 =
+            enqueue_request(request("rr-2", "run-a", "p", "b.test"), policy.clone()).unwrap();
+        let rx3 = enqueue_request(request("rr-3", "run-b", "p", "c.test"), policy.clone()).unwrap();
 
         assert!(rx1.await.unwrap().is_ok());
         assert!(rx2.try_recv().is_err());
@@ -1323,29 +1134,22 @@ mod tests {
 
     #[tokio::test]
     async fn cancels_all_pending_requests_for_run() {
-        let kind = PluginFetchPolicyKind::MonitorFetch;
-        let policy = PluginFetchPolicy {
+        let policy = ActiveProbePolicy {
             max_global_concurrent: 1,
             ..test_policy()
         };
-        let _blocker = enqueue_plugin_request(
-            request(kind, "cancel-blocker", "other-run", "p", "a.test"),
+        let _blocker =
+            enqueue_request(request("cancel-blocker", "other-run", "p", "a.test"), policy.clone())
+                .unwrap();
+        let rx1 = enqueue_request(
+            request("cancel-run-1", "cancel-run", "p", "a.test"),
             policy.clone(),
         )
         .unwrap();
-        let rx1 = enqueue_plugin_request(
-            request(kind, "cancel-run-1", "cancel-run", "p", "a.test"),
-            policy.clone(),
-        )
-        .unwrap();
-        let rx2 = enqueue_plugin_request(
-            request(kind, "cancel-run-2", "cancel-run", "p", "b.test"),
-            policy,
-        )
-        .unwrap();
+        let rx2 =
+            enqueue_request(request("cancel-run-2", "cancel-run", "p", "b.test"), policy).unwrap();
 
-        let cancelled =
-            cancel_plugin_requests_by_run(kind, "cancel-run", Some("run stopped".to_string()));
+        let cancelled = cancel_requests_by_run("cancel-run", Some("run stopped".to_string()));
         assert_eq!(cancelled.len(), 2);
         assert!(rx1.await.unwrap().is_err());
         assert!(rx2.await.unwrap().is_err());
@@ -1353,12 +1157,10 @@ mod tests {
 
     #[tokio::test]
     async fn rejects_new_requests_for_cancelled_run() {
-        let kind = PluginFetchPolicyKind::BountyFetch;
         let policy = test_policy();
-        let _ =
-            cancel_plugin_requests_by_run(kind, "already-cancelled", Some("stopped".to_string()));
-        let error = enqueue_plugin_request(
-            request(kind, "cancelled-new-1", "already-cancelled", "p", "a.test"),
+        let _ = cancel_requests_by_run("already-cancelled", Some("stopped".to_string()));
+        let error = enqueue_request(
+            request("cancelled-new-1", "already-cancelled", "p", "a.test"),
             policy,
         )
         .expect_err("new request for cancelled run should be rejected");
@@ -1367,16 +1169,13 @@ mod tests {
 
     #[tokio::test]
     async fn tracks_rejection_reason_counters() {
-        let kind = PluginFetchPolicyKind::TrafficActiveProbe;
-
-        let queue_limit_policy = PluginFetchPolicy {
+        let queue_limit_policy = ActiveProbePolicy {
             max_queue_depth: 1,
             max_global_concurrent: 0,
             ..test_policy()
         };
-        let _ = enqueue_plugin_request(
+        let _ = enqueue_request(
             request(
-                kind,
                 "reject-queue-1",
                 "queue-run-a",
                 "queue-plugin-a",
@@ -1385,9 +1184,8 @@ mod tests {
             queue_limit_policy.clone(),
         )
         .expect("first request should enqueue");
-        let queue_error = enqueue_plugin_request(
+        let queue_error = enqueue_request(
             request(
-                kind,
                 "reject-queue-2",
                 "queue-run-b",
                 "queue-plugin-b",
@@ -1398,14 +1196,13 @@ mod tests {
         .expect_err("second request should exceed queue limit");
         assert!(queue_error.contains("queue limit"));
 
-        let run_limit_policy = PluginFetchPolicy {
+        let run_limit_policy = ActiveProbePolicy {
             max_pending_per_run: 1,
             max_global_concurrent: 0,
             ..test_policy()
         };
-        let _ = enqueue_plugin_request(
+        let _ = enqueue_request(
             request(
-                kind,
                 "reject-run-1",
                 "run-limit",
                 "run-plugin-a",
@@ -1414,9 +1211,8 @@ mod tests {
             run_limit_policy.clone(),
         )
         .expect("first run-limited request should enqueue");
-        let run_error = enqueue_plugin_request(
+        let run_error = enqueue_request(
             request(
-                kind,
                 "reject-run-2",
                 "run-limit",
                 "run-plugin-b",
@@ -1427,14 +1223,13 @@ mod tests {
         .expect_err("second request should exceed run pending limit");
         assert!(run_error.contains("run pending limit"));
 
-        let plugin_limit_policy = PluginFetchPolicy {
+        let plugin_limit_policy = ActiveProbePolicy {
             max_pending_per_plugin: 1,
             max_global_concurrent: 0,
             ..test_policy()
         };
-        let _ = enqueue_plugin_request(
+        let _ = enqueue_request(
             request(
-                kind,
                 "reject-plugin-1",
                 "plugin-run-a",
                 "shared-plugin-limit",
@@ -1443,9 +1238,8 @@ mod tests {
             plugin_limit_policy.clone(),
         )
         .expect("first plugin-limited request should enqueue");
-        let plugin_error = enqueue_plugin_request(
+        let plugin_error = enqueue_request(
             request(
-                kind,
                 "reject-plugin-2",
                 "plugin-run-b",
                 "shared-plugin-limit",
@@ -1456,11 +1250,9 @@ mod tests {
         .expect_err("second request should exceed plugin pending limit");
         assert!(plugin_error.contains("plugin pending limit"));
 
-        let _ =
-            cancel_plugin_requests_by_run(kind, "rejected-cancelled-run", Some("stop".to_string()));
-        let cancelled_error = enqueue_plugin_request(
+        let _ = cancel_requests_by_run("rejected-cancelled-run", Some("stop".to_string()));
+        let cancelled_error = enqueue_request(
             request(
-                kind,
                 "reject-cancelled-1",
                 "rejected-cancelled-run",
                 "cancelled-plugin",
@@ -1471,33 +1263,29 @@ mod tests {
         .expect_err("request for cancelled run should be rejected");
         assert!(cancelled_error.contains("cancelled"));
 
-        assert!(cancel_plugin_request(
-            kind,
+        assert!(cancel_request(
             "reject-queue-1",
             Some("cleanup queue limit sample".to_string())
         )
         .is_some());
-        assert!(cancel_plugin_request(
-            kind,
+        assert!(cancel_request(
             "reject-run-1",
             Some("cleanup run limit sample".to_string())
         )
         .is_some());
-        assert!(cancel_plugin_request(
-            kind,
+        assert!(cancel_request(
             "reject-plugin-1",
             Some("cleanup plugin limit sample".to_string())
         )
         .is_some());
 
-        let throughput_policy = PluginFetchPolicy {
+        let throughput_policy = ActiveProbePolicy {
             max_global_concurrent: 1,
             ..test_policy()
         };
 
-        let success_rx = enqueue_plugin_request(
+        let success_rx = enqueue_request(
             request(
-                kind,
                 "throughput-complete",
                 "throughput-run-complete",
                 "throughput-plugin-complete",
@@ -1508,14 +1296,11 @@ mod tests {
         .expect("success request should enqueue");
         assert!(success_rx.await.unwrap().is_ok());
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        assert!(mark_plugin_request_running(kind, "throughput-complete").is_some());
-        assert!(
-            complete_plugin_request(kind, "throughput-complete", Some(200), Some(120)).is_some()
-        );
+        assert!(mark_request_running("throughput-complete").is_some());
+        assert!(complete_request("throughput-complete", Some(200), Some(120)).is_some());
 
-        let fail_rx = enqueue_plugin_request(
+        let fail_rx = enqueue_request(
             request(
-                kind,
                 "throughput-fail",
                 "throughput-run-fail",
                 "throughput-plugin-fail",
@@ -1526,9 +1311,8 @@ mod tests {
         .expect("failed request should enqueue");
         assert!(fail_rx.await.unwrap().is_ok());
         tokio::time::sleep(std::time::Duration::from_millis(7)).await;
-        assert!(mark_plugin_request_running(kind, "throughput-fail").is_some());
-        assert!(fail_plugin_request(
-            kind,
+        assert!(mark_request_running("throughput-fail").is_some());
+        assert!(fail_request(
             "throughput-fail",
             Some(500),
             Some("boom".to_string()),
@@ -1536,9 +1320,8 @@ mod tests {
         )
         .is_some());
 
-        let blocker_rx = enqueue_plugin_request(
+        let blocker_rx = enqueue_request(
             request(
-                kind,
                 "throughput-blocker",
                 "throughput-run-blocker",
                 "throughput-plugin-blocker",
@@ -1548,11 +1331,10 @@ mod tests {
         )
         .expect("blocker should enqueue");
         assert!(blocker_rx.await.unwrap().is_ok());
-        assert!(mark_plugin_request_running(kind, "throughput-blocker").is_some());
+        assert!(mark_request_running("throughput-blocker").is_some());
 
-        let cancelled_pending_rx = enqueue_plugin_request(
+        let cancelled_pending_rx = enqueue_request(
             request(
-                kind,
                 "throughput-cancelled",
                 "throughput-run-cancelled",
                 "throughput-plugin-cancelled",
@@ -1561,16 +1343,15 @@ mod tests {
             throughput_policy,
         )
         .expect("cancelled pending request should enqueue");
-        assert!(cancel_plugin_request(
-            kind,
+        assert!(cancel_request(
             "throughput-cancelled",
             Some("cancel throughput".to_string())
         )
         .is_some());
         assert!(cancelled_pending_rx.await.unwrap().is_err());
-        assert!(complete_plugin_request(kind, "throughput-blocker", Some(200), Some(50)).is_some());
+        assert!(complete_request("throughput-blocker", Some(200), Some(50)).is_some());
 
-        let stats = get_plugin_request_queue_stats(kind);
+        let stats = get_queue_stats();
         assert_eq!(stats.rejected_queue_limit_count, 1);
         assert_eq!(stats.rejected_run_pending_limit_count, 1);
         assert_eq!(stats.rejected_plugin_pending_limit_count, 1);
@@ -1582,5 +1363,35 @@ mod tests {
         assert_eq!(stats.recent_window_cancelled_count, 4);
         assert!(stats.recent_window_avg_queue_wait_ms > 0);
         assert!(stats.recent_window_avg_response_elapsed_ms > 0);
+    }
+
+    #[test]
+    fn configured_active_probe_policy_reads_runtime_settings() {
+        let policy = configured_active_probe_policy();
+        let settings = get_plugin_runtime_settings().active_probe;
+        assert_eq!(policy.max_queue_depth, settings.max_queue_depth as usize);
+        assert_eq!(policy.timeout_ms, settings.timeout_ms);
+    }
+
+    #[test]
+    fn empty_snapshot_before_any_requests() {
+        let snapshot = get_queue_snapshot();
+        assert!(snapshot.pending.is_empty());
+        assert!(snapshot.running.is_empty());
+        assert!(snapshot.recent.is_empty());
+    }
+
+    #[test]
+    fn empty_stats_uses_configured_policy_limits() {
+        let policy = configured_active_probe_policy();
+        let stats = empty_stats(&policy);
+        assert_eq!(
+            stats.configured_max_queue_depth,
+            policy.max_queue_depth as u32
+        );
+        assert_eq!(
+            stats.configured_max_global_concurrent,
+            policy.max_global_concurrent
+        );
     }
 }

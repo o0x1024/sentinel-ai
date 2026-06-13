@@ -21,6 +21,7 @@
 //! - `plugins/plugin-types.d.ts` - TypeScript 类型定义
 //! - `plugins/README.md` - 开发指南
 
+pub mod active_probe_queue;
 pub mod active_probe_scheduler;
 pub mod compile_cache;
 pub mod dictionary_runtime;
@@ -41,7 +42,6 @@ pub mod plugin_ops;
 // Legacy module — kept for reference but not compiled (one_* crates removed)
 // pub mod one_plugin_runtime;
 pub mod sentinel_js_runtime;
-pub mod request_scheduler;
 pub mod runtime_config;
 mod runtime_events;
 mod service_probe;
@@ -73,13 +73,7 @@ pub use plugin::{
 pub use plugin_context::PluginContext;
 pub use plugin_engine::PluginEngine;
 pub use plugin_ops::cancel_plugin_fetch_requests_by_run;
-pub use request_scheduler::{
-    cancel_plugin_request, cancel_plugin_requests_by_run, complete_plugin_request,
-    enqueue_plugin_request, fail_plugin_request, get_plugin_request_queue_snapshot,
-    get_plugin_request_queue_stats, mark_plugin_request_running, PluginFetchPolicy,
-    PluginFetchPolicyKind, PluginRequestDispatchGrant, PluginRequestPhase, PluginRequestQueueEntry,
-    PluginRequestQueueSnapshot, PluginRequestQueueStats, PluginRequestScheduleRequest,
-};
+pub use active_probe_queue::get_queue_stats as get_active_probe_request_queue_stats;
 pub use runtime_config::{
     get_plugin_runtime_settings, set_plugin_runtime_settings, ActiveProbeRuntimeSettings,
     PluginRuntimeSettings,

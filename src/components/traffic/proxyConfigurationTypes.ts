@@ -73,10 +73,6 @@ export interface TrafficPluginFetchPolicySettings {
 
 export interface TrafficPluginRuntimeSettings {
   activeProbe: TrafficPluginActiveProbeSettings
-  bountyFetch: TrafficPluginFetchPolicySettings
-  monitorFetch: TrafficPluginFetchPolicySettings
-  agentFetch: TrafficPluginFetchPolicySettings
-  pluginTestFetch: TrafficPluginFetchPolicySettings
 }
 
 export interface TrafficOastTestResult {
@@ -310,54 +306,6 @@ export function createDefaultTrafficPluginRuntimeSettings(): TrafficPluginRuntim
       maxConcurrentPerHost: 2,
       maxConcurrentPerRun: 16,
       maxConcurrentPerPlugin: 16,
-      timeoutMs: 3000,
-    },
-    bountyFetch: {
-      maxQueueDepth: 1000,
-      maxPendingPerRun: 250,
-      maxPendingPerPlugin: 500,
-      maxGlobalConcurrent: 16,
-      maxConcurrentPerHost: 2,
-      maxConcurrentPerRun: 16,
-      maxConcurrentPerPlugin: 16,
-      minHostDelayMs: 1000,
-      jitterRange: [300, 1000],
-      timeoutMs: 3000,
-    },
-    monitorFetch: {
-      maxQueueDepth: 1000,
-      maxPendingPerRun: 250,
-      maxPendingPerPlugin: 500,
-      maxGlobalConcurrent: 16,
-      maxConcurrentPerHost: 2,
-      maxConcurrentPerRun: 16,
-      maxConcurrentPerPlugin: 16,
-      minHostDelayMs: 500,
-      jitterRange: [50, 250],
-      timeoutMs: 3000,
-    },
-    agentFetch: {
-      maxQueueDepth: 300,
-      maxPendingPerRun: 75,
-      maxPendingPerPlugin: 150,
-      maxGlobalConcurrent: 16,
-      maxConcurrentPerHost: 2,
-      maxConcurrentPerRun: 16,
-      maxConcurrentPerPlugin: 16,
-      minHostDelayMs: 500,
-      jitterRange: [100, 500],
-      timeoutMs: 3000,
-    },
-    pluginTestFetch: {
-      maxQueueDepth: 50,
-      maxPendingPerRun: 20,
-      maxPendingPerPlugin: 30,
-      maxGlobalConcurrent: 16,
-      maxConcurrentPerHost: 1,
-      maxConcurrentPerRun: 16,
-      maxConcurrentPerPlugin: 16,
-      minHostDelayMs: 100,
-      jitterRange: [0, 100],
       timeoutMs: 3000,
     },
   }

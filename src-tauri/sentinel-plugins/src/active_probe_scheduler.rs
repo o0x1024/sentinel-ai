@@ -1,9 +1,8 @@
-use crate::request_scheduler::{
-    cancel_plugin_request, complete_plugin_request, configured_policy_for_kind,
-    enqueue_plugin_request, fail_plugin_request, get_plugin_request_queue_snapshot,
-    mark_plugin_request_running, PluginFetchPolicy, PluginFetchPolicyKind,
-    PluginRequestDispatchGrant, PluginRequestPhase, PluginRequestQueueEntry,
-    PluginRequestScheduleRequest,
+use crate::active_probe_queue::{
+    cancel_request, complete_request, configured_active_probe_policy, enqueue_request,
+    fail_request, get_queue_snapshot, mark_request_running,
+    ActiveProbeDispatchGrant as QueueDispatchGrant, ActiveProbeQueueEntry as QueueEntry,
+    ActiveProbeQueuePhase as QueuePhase, ActiveProbeScheduleRequest,
 };
 use crate::runtime_events::emit_active_probe_queue_event;
 use serde::{Deserialize, Serialize};
@@ -113,10 +112,6 @@ fn metadata_state() -> &'static Mutex<ActiveProbeMetadataState> {
     ACTIVE_PROBE_METADATA.get_or_init(|| Mutex::new(ActiveProbeMetadataState::default()))
 }
 
-fn active_probe_policy() -> PluginFetchPolicy {
-    configured_policy_for_kind(PluginFetchPolicyKind::TrafficActiveProbe)
-}
-
 fn normalize_fetch_host(url: &str) -> Result<String, String> {
     let parsed = reqwest::Url::parse(url)
         .map_err(|error| format!("Invalid active probe URL '{}': {}", url, error))?;
@@ -130,9 +125,8 @@ fn normalize_fetch_host(url: &str) -> Result<String, String> {
     Ok(format!("{host}{port}"))
 }
 
-fn build_schedule(request: &ActiveProbeRequest) -> Result<PluginRequestScheduleRequest, String> {
-    Ok(PluginRequestScheduleRequest {
-        kind: PluginFetchPolicyKind::TrafficActiveProbe,
+fn build_schedule(request: &ActiveProbeRequest) -> Result<ActiveProbeScheduleRequest, String> {
+    Ok(ActiveProbeScheduleRequest {
         request_id: request.request_id.clone(),
         run_id: request.traffic_request_id.clone(),
         plugin_id: request.plugin_id.clone(),
@@ -143,27 +137,24 @@ fn build_schedule(request: &ActiveProbeRequest) -> Result<PluginRequestScheduleR
     })
 }
 
-fn phase_from_plugin(entry: &PluginRequestQueueEntry) -> ActiveProbeQueuePhase {
+fn phase_from_queue(entry: &QueueEntry) -> ActiveProbeQueuePhase {
     match entry.phase {
-        PluginRequestPhase::Queued => ActiveProbeQueuePhase::Queued,
-        PluginRequestPhase::Scheduled => ActiveProbeQueuePhase::Scheduled,
-        PluginRequestPhase::Running => ActiveProbeQueuePhase::Running,
-        PluginRequestPhase::Completed => ActiveProbeQueuePhase::Completed,
-        PluginRequestPhase::Failed => ActiveProbeQueuePhase::Failed,
-        PluginRequestPhase::Cancelled => ActiveProbeQueuePhase::Cancelled,
+        QueuePhase::Queued => ActiveProbeQueuePhase::Queued,
+        QueuePhase::Scheduled => ActiveProbeQueuePhase::Scheduled,
+        QueuePhase::Running => ActiveProbeQueuePhase::Running,
+        QueuePhase::Completed => ActiveProbeQueuePhase::Completed,
+        QueuePhase::Failed => ActiveProbeQueuePhase::Failed,
+        QueuePhase::Cancelled => ActiveProbeQueuePhase::Cancelled,
     }
 }
 
-fn map_entry(
-    entry: &PluginRequestQueueEntry,
-    metadata: Option<&ActiveProbeRequest>,
-) -> ActiveProbeQueueEntry {
-    let policy = active_probe_policy();
+fn map_entry(entry: &QueueEntry, metadata: Option<&ActiveProbeRequest>) -> ActiveProbeQueueEntry {
+    let policy = configured_active_probe_policy();
     ActiveProbeQueueEntry {
         plugin_id: entry.plugin_id.clone(),
         traffic_request_id: entry.run_id.clone(),
         request_id: entry.request_id.clone(),
-        phase: phase_from_plugin(entry),
+        phase: phase_from_queue(entry),
         method: entry.method.clone(),
         url: entry.url.clone(),
         probe_label: metadata.and_then(|request| request.probe_label.clone()),
@@ -198,8 +189,8 @@ fn map_entry(
     }
 }
 
-fn map_grant(grant: PluginRequestDispatchGrant) -> ActiveProbeDispatchGrant {
-    let policy = active_probe_policy();
+fn map_grant(grant: QueueDispatchGrant) -> ActiveProbeDispatchGrant {
+    let policy = configured_active_probe_policy();
     ActiveProbeDispatchGrant {
         active_slots: grant.active_for_host,
         max_concurrent_per_host: policy.max_concurrent_per_host,
@@ -245,7 +236,8 @@ pub fn enqueue_active_probe(
     request: ActiveProbeRequest,
 ) -> Result<oneshot::Receiver<Result<ActiveProbeDispatchGrant, String>>, String> {
     let schedule = build_schedule(&request)?;
-    let plugin_rx = enqueue_plugin_request(schedule, active_probe_policy())?;
+    let policy = configured_active_probe_policy();
+    let queue_rx = enqueue_request(schedule, policy)?;
 
     metadata_state()
         .lock()
@@ -256,7 +248,7 @@ pub fn enqueue_active_probe(
 
     let (tx, rx) = oneshot::channel();
     tokio::spawn(async move {
-        let mapped = match plugin_rx.await {
+        let mapped = match queue_rx.await {
             Ok(Ok(grant)) => Ok(map_grant(grant)),
             Ok(Err(error)) => Err(error),
             Err(_) => Err("Active probe scheduler dropped dispatch grant".to_string()),
@@ -268,7 +260,7 @@ pub fn enqueue_active_probe(
 }
 
 pub fn mark_active_probe_running(request_id: &str) -> Option<ActiveProbeQueueEntry> {
-    let entry = mark_plugin_request_running(PluginFetchPolicyKind::TrafficActiveProbe, request_id);
+    let entry = mark_request_running(request_id);
     let snapshot = get_active_probe_queue_snapshot();
     let mapped = snapshot
         .running
@@ -294,12 +286,7 @@ pub fn complete_active_probe(
     status: Option<u16>,
     response_elapsed_ms: Option<u64>,
 ) -> Option<ActiveProbeQueueEntry> {
-    let entry = complete_plugin_request(
-        PluginFetchPolicyKind::TrafficActiveProbe,
-        request_id,
-        status,
-        response_elapsed_ms,
-    );
+    let entry = complete_request(request_id, status, response_elapsed_ms);
     let mapped = entry.map(|entry| {
         let metadata = metadata_state()
             .lock()
@@ -319,13 +306,7 @@ pub fn fail_active_probe(
     error: Option<String>,
     response_elapsed_ms: Option<u64>,
 ) -> Option<ActiveProbeQueueEntry> {
-    let entry = fail_plugin_request(
-        PluginFetchPolicyKind::TrafficActiveProbe,
-        request_id,
-        status,
-        error,
-        response_elapsed_ms,
-    );
+    let entry = fail_request(request_id, status, error, response_elapsed_ms);
     let mapped = entry.map(|entry| {
         let metadata = metadata_state()
             .lock()
@@ -343,11 +324,7 @@ pub fn cancel_active_probe(
     request_id: &str,
     reason: Option<String>,
 ) -> Option<ActiveProbeQueueEntry> {
-    let entry = cancel_plugin_request(
-        PluginFetchPolicyKind::TrafficActiveProbe,
-        request_id,
-        reason,
-    );
+    let entry = cancel_request(request_id, reason);
     let mapped = entry.map(|entry| {
         let metadata = metadata_state()
             .lock()
@@ -362,7 +339,7 @@ pub fn cancel_active_probe(
 }
 
 pub fn get_active_probe_queue_snapshot() -> ActiveProbeQueueSnapshot {
-    let snapshot = get_plugin_request_queue_snapshot(PluginFetchPolicyKind::TrafficActiveProbe);
+    let snapshot = get_queue_snapshot();
     let metadata = metadata_state()
         .lock()
         .expect("active probe metadata poisoned")
@@ -418,7 +395,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn active_probe_uses_unified_scheduler_snapshot() {
+    async fn active_probe_uses_standalone_queue_snapshot() {
         let id = format!("active-probe-test-{}", uuid::Uuid::new_v4());
         let run_id = format!("traffic-{}", uuid::Uuid::new_v4());
         let rx = enqueue_active_probe(request(&id, &run_id)).expect("request should enqueue");

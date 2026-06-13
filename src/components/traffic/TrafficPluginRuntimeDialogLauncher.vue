@@ -196,13 +196,7 @@ const props = withDefaults(
     iconClass?: string
   }>(),
   {
-    policyIds: () => [
-      'activeProbe',
-      'bountyFetch',
-      'monitorFetch',
-      'agentFetch',
-      'pluginTestFetch',
-    ],
+    policyIds: () => ['activeProbe'],
     defaultExpandedPolicyIds: () => [],
     collapsible: true,
     title: '',

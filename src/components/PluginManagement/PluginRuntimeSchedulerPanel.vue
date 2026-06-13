@@ -164,13 +164,7 @@ const props = withDefaults(
     hint?: string
   }>(),
   {
-    policyIds: () => [
-      'activeProbe',
-      'bountyFetch',
-      'monitorFetch',
-      'agentFetch',
-      'pluginTestFetch',
-    ],
+    policyIds: () => ['activeProbe'],
     collapsible: false,
     defaultExpandedPolicyIds: () => [],
     description: '',
@@ -192,10 +186,6 @@ const queueStatsByKind = computed<
   Record<TrafficPluginRuntimePolicyKind, TrafficPluginRuntimeQueueStats | null>
 >(() => ({
   traffic_active_probe: snapshot.value?.activeProbe ?? null,
-  bounty_fetch: snapshot.value?.bountyFetch ?? null,
-  monitor_fetch: snapshot.value?.monitorFetch ?? null,
-  agent_fetch: snapshot.value?.agentFetch ?? null,
-  plugin_test_fetch: snapshot.value?.pluginTestFetch ?? null,
 }))
 
 const visiblePolicies = computed(() => {
@@ -207,38 +197,6 @@ const visiblePolicies = computed(() => {
       description: t('trafficAnalysis.proxyConfiguration.pluginRuntimePolicyActiveProbeDesc'),
       delayLabel: t('trafficAnalysis.proxyConfiguration.activeProbeMinHostCooldownMs'),
       delayField: 'minHostCooldownMs' as const,
-    },
-    {
-      id: 'bountyFetch' as const,
-      queueKind: 'bounty_fetch' as const,
-      title: t('trafficAnalysis.proxyConfiguration.pluginRuntimePolicyBountyTitle'),
-      description: t('trafficAnalysis.proxyConfiguration.pluginRuntimePolicyBountyDesc'),
-      delayLabel: t('trafficAnalysis.proxyConfiguration.fetchMinHostDelayMs'),
-      delayField: 'minHostDelayMs' as const,
-    },
-    {
-      id: 'monitorFetch' as const,
-      queueKind: 'monitor_fetch' as const,
-      title: t('trafficAnalysis.proxyConfiguration.pluginRuntimePolicyMonitorTitle'),
-      description: t('trafficAnalysis.proxyConfiguration.pluginRuntimePolicyMonitorDesc'),
-      delayLabel: t('trafficAnalysis.proxyConfiguration.fetchMinHostDelayMs'),
-      delayField: 'minHostDelayMs' as const,
-    },
-    {
-      id: 'agentFetch' as const,
-      queueKind: 'agent_fetch' as const,
-      title: t('trafficAnalysis.proxyConfiguration.pluginRuntimePolicyAgentTitle'),
-      description: t('trafficAnalysis.proxyConfiguration.pluginRuntimePolicyAgentDesc'),
-      delayLabel: t('trafficAnalysis.proxyConfiguration.fetchMinHostDelayMs'),
-      delayField: 'minHostDelayMs' as const,
-    },
-    {
-      id: 'pluginTestFetch' as const,
-      queueKind: 'plugin_test_fetch' as const,
-      title: t('trafficAnalysis.proxyConfiguration.pluginRuntimePolicyPluginTestTitle'),
-      description: t('trafficAnalysis.proxyConfiguration.pluginRuntimePolicyPluginTestDesc'),
-      delayLabel: t('trafficAnalysis.proxyConfiguration.fetchMinHostDelayMs'),
-      delayField: 'minHostDelayMs' as const,
     },
   ]
 

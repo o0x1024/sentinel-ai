@@ -17,8 +17,6 @@ describe('pluginRuntimeSettingsSupport', () => {
     })
 
     expect(merged.activeProbe.timeoutMs).toBe(9000)
-    expect(merged.bountyFetch.maxQueueDepth).toBe(1000)
-    expect(merged.pluginTestFetch.timeoutMs).toBe(3000)
   })
 
   it('clamps invalid numeric values into allowed ranges', () => {

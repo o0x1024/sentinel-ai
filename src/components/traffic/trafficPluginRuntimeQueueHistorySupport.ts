@@ -1,38 +1,25 @@
 import type {
-  TrafficPluginRuntimePolicyKind,
   TrafficPluginRuntimeQueueHistoryPoint,
   TrafficPluginRuntimeQueueHistorySnapshot,
-  TrafficPluginRuntimeQueueStats,
   TrafficPluginRuntimeQueueStatsSnapshot,
+  TrafficPluginRuntimePolicyKind,
 } from './trafficPluginRuntimeQueueTypes'
 
-export const TRAFFIC_PLUGIN_RUNTIME_HISTORY_LIMIT = 24
+export const TRAFFIC_PLUGIN_RUNTIME_HISTORY_LIMIT = 120
 
-type PolicySnapshotKey =
-  | 'activeProbe'
-  | 'bountyFetch'
-  | 'monitorFetch'
-  | 'agentFetch'
-  | 'pluginTestFetch'
-
-const POLICY_KEYS: PolicySnapshotKey[] = [
-  'activeProbe',
-  'bountyFetch',
-  'monitorFetch',
-  'agentFetch',
-  'pluginTestFetch',
-]
-
-const POLICY_KEY_BY_KIND: Record<TrafficPluginRuntimePolicyKind, PolicySnapshotKey> = {
+const POLICY_KEY_BY_KIND: Record<TrafficPluginRuntimePolicyKind, 'activeProbe'> = {
   traffic_active_probe: 'activeProbe',
-  bounty_fetch: 'bountyFetch',
-  monitor_fetch: 'monitorFetch',
-  agent_fetch: 'agentFetch',
-  plugin_test_fetch: 'pluginTestFetch',
+}
+
+function trimHistory<T>(points: T[]): T[] {
+  if (points.length <= TRAFFIC_PLUGIN_RUNTIME_HISTORY_LIMIT) {
+    return points
+  }
+  return points.slice(points.length - TRAFFIC_PLUGIN_RUNTIME_HISTORY_LIMIT)
 }
 
 function createHistoryPoint(
-  stats: TrafficPluginRuntimeQueueStats,
+  stats: TrafficPluginRuntimeQueueStatsSnapshot['activeProbe'],
   recordedAt: string
 ): TrafficPluginRuntimeQueueHistoryPoint {
   return {
@@ -44,22 +31,9 @@ function createHistoryPoint(
   }
 }
 
-function trimHistory(
-  points: TrafficPluginRuntimeQueueHistoryPoint[]
-): TrafficPluginRuntimeQueueHistoryPoint[] {
-  if (points.length <= TRAFFIC_PLUGIN_RUNTIME_HISTORY_LIMIT) {
-    return points
-  }
-  return points.slice(points.length - TRAFFIC_PLUGIN_RUNTIME_HISTORY_LIMIT)
-}
-
 export function createEmptyTrafficPluginRuntimeQueueHistory(): TrafficPluginRuntimeQueueHistorySnapshot {
   return {
     activeProbe: [],
-    bountyFetch: [],
-    monitorFetch: [],
-    agentFetch: [],
-    pluginTestFetch: [],
   }
 }
 
@@ -72,22 +46,6 @@ export function appendTrafficPluginRuntimeQueueHistory(
     activeProbe: trimHistory([
       ...current.activeProbe,
       createHistoryPoint(snapshot.activeProbe, recordedAt),
-    ]),
-    bountyFetch: trimHistory([
-      ...current.bountyFetch,
-      createHistoryPoint(snapshot.bountyFetch, recordedAt),
-    ]),
-    monitorFetch: trimHistory([
-      ...current.monitorFetch,
-      createHistoryPoint(snapshot.monitorFetch, recordedAt),
-    ]),
-    agentFetch: trimHistory([
-      ...current.agentFetch,
-      createHistoryPoint(snapshot.agentFetch, recordedAt),
-    ]),
-    pluginTestFetch: trimHistory([
-      ...current.pluginTestFetch,
-      createHistoryPoint(snapshot.pluginTestFetch, recordedAt),
     ]),
   }
 }

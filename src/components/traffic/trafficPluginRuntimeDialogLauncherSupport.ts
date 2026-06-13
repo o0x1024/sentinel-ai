@@ -17,19 +17,10 @@ import {
   normalizeTrafficPluginRuntimeSettings,
 } from './pluginRuntimeSettingsSupport'
 
-type PolicySnapshotKey =
-  | 'activeProbe'
-  | 'bountyFetch'
-  | 'monitorFetch'
-  | 'agentFetch'
-  | 'pluginTestFetch'
+type PolicySnapshotKey = 'activeProbe'
 
 const POLICY_KEY_BY_ID: Record<TrafficPluginRuntimePolicyId, PolicySnapshotKey> = {
   activeProbe: 'activeProbe',
-  bountyFetch: 'bountyFetch',
-  monitorFetch: 'monitorFetch',
-  agentFetch: 'agentFetch',
-  pluginTestFetch: 'pluginTestFetch',
 }
 
 export interface TrafficPluginRuntimeLauncherSummary {
