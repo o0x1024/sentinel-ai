@@ -200,6 +200,27 @@ function __flushFetchQueue() {
     }
 }
 
+function __mapActiveProbe(probe) {
+    if (probe === true) {
+        return {};
+    }
+    if (!probe || typeof probe !== "object") {
+        return null;
+    }
+    var mapped = {};
+    if (probe.probe_label != null) {
+        mapped.probe_label = probe.probe_label;
+    } else if (probe.probeLabel != null) {
+        mapped.probe_label = probe.probeLabel;
+    }
+    if (probe.target_name != null) mapped.target_name = probe.target_name;
+    if (probe.target_path != null) mapped.target_path = probe.target_path;
+    if (probe.target_location != null) mapped.target_location = probe.target_location;
+    if (probe.probe_value != null) mapped.probe_value = probe.probe_value;
+    if (probe.technique != null) mapped.technique = probe.technique;
+    return mapped;
+}
+
 // --- fetch ---
 function fetch(input, init) {
     init = init || {};
@@ -235,6 +256,17 @@ function fetch(input, init) {
         max_redirects: init.maxRedirects,
         max_body_bytes: init.maxBodyBytes
     };
+
+    if (init.timeout != null) {
+        requestOptions.timeout = init.timeout;
+    }
+    if (init.requestId != null) {
+        requestOptions.request_id = init.requestId;
+    }
+    var activeProbe = __mapActiveProbe(init.activeProbe);
+    if (activeProbe != null) {
+        requestOptions.active_probe = activeProbe;
+    }
 
     return new Promise(function(resolve, reject) {
         __fetchQueue.push({
