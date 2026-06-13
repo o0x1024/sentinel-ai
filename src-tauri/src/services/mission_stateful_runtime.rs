@@ -155,6 +155,10 @@ pub async fn build_runtime_context(
 }
 
 pub fn build_system_prompt(mission: &Mission) -> String {
+    if crate::services::observer_data_collector::is_observer_mission(mission) {
+        return build_observer_system_prompt();
+    }
+
     format!(
         "You are executing a stateful Mission.\n\
          Mission objective: {}\n\n\
@@ -181,6 +185,37 @@ pub fn build_system_prompt(mission: &Mission) -> String {
          actions, report, and completion.status.",
         mission.objective
     )
+}
+
+fn build_observer_system_prompt() -> String {
+    "You are a Bot operations observer (Observer).\n\
+     Your responsibilities:\n\
+     1. Analyze overall Bot execution health from the provided observer_data snapshot.\n\
+     2. Detect abnormal patterns (failure spikes, slow runs, offline accounts, stuck missions).\n\
+     3. Produce concise, actionable Chinese reports for operators.\n\
+     4. Recommend follow-up actions when serious issues are found.\n\n\
+     The execution context includes observer_data with:\n\
+     - execution_summary\n\
+     - account_health\n\
+     - mission_progress\n\
+     - failure_details\n\
+     - token_usage\n\n\
+     CRITICAL OUTPUT RULE — VIOLATION WILL CAUSE MISSION FAILURE:\n\
+     Your ENTIRE final response must be exactly one JSON object. No character may appear\n\
+     before the opening { or after the closing }. No markdown, no code fences, no\n\
+     natural-language introduction, no commentary, no thinking-out-loud. The first byte\n\
+     of your response after whitespace trimming MUST be {.\n\n\
+     Required JSON shape:\n\
+     {\n\
+       \"observations\": [{\"type\":\"...\",\"severity\":\"info|warning|error\",\"title\":\"...\",\"summary\":\"...\",\"data\":{},\"artifact_ids\":[]}],\n\
+       \"actions\": [{\"type\":\"...\",\"status\":\"recorded|succeeded|failed|skipped\",\"input\":{},\"result\":{},\"error\":null}],\n\
+       \"state_patch\": {\"last_observation_at\":\"<RFC3339>\",\"previous_failure_rate\":0.0},\n\
+       \"report\": {\"title\":\"...\",\"summary\":\"...\",\"details\":\"...\"},\n\
+       \"completion\": {\"status\":\"continue\",\"reason\":\"Observer keeps running\"}\n\
+     }\n\n\
+     Always set completion.status to continue. Put durable facts in observations, actions, or state_patch.\n\
+     Write report text in Chinese. Keep it concise and highlight changes versus previous baselines when possible."
+        .to_string()
 }
 
 pub fn build_task(mission: &Mission, context: &MissionRuntimeContext) -> String {
@@ -610,6 +645,38 @@ mod tests {
         assert!(task.contains("Final response contract"));
         assert!(task.contains("must be {"));
         assert!(task.contains("Do not include prose before or after the JSON"));
+    }
+
+    #[test]
+    fn observer_mission_uses_observer_system_prompt() {
+        let mission = Mission {
+            id: "mission-observer".to_string(),
+            title: "Observer".to_string(),
+            objective: "Observe bot health".to_string(),
+            status: "active".to_string(),
+            owner_kind: "observer".to_string(),
+            owner_ref: "global".to_string(),
+            source_json: None,
+            delivery_policy_json: None,
+            assistant_profile_id: None,
+            trigger_json: None,
+            mission_spec_json: Some(r#"{"kind":"observer_mission"}"#.to_string()),
+            step_plan_json: None,
+            success_criteria_json: None,
+            context_strategy_json: None,
+            budget_json: None,
+            failure_policy_json: None,
+            missed_run_policy: "skip".to_string(),
+            next_run_at: None,
+            last_run_at: None,
+            last_error: None,
+            run_count: 0,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let prompt = build_system_prompt(&mission);
+        assert!(prompt.contains("Bot operations observer"));
+        assert!(prompt.contains("observer_data"));
     }
 
     #[test]

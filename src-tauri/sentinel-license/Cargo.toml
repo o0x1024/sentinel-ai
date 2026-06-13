@@ -8,10 +8,6 @@ description = "License management for Sentinel AI"
 name = "license_generator"
 path = "src/bin/license_generator.rs"
 
-[[bin]]
-name = "entitlement_server"
-path = "src/bin/entitlement_server.rs"
-
 [dependencies]
 # Ed25519 signature
 ed25519-dalek = { version = "2.1", features = ["rand_core"] }
@@ -31,16 +27,9 @@ serde_json = "1.0"
 
 # Error handling
 thiserror = "1.0"
-anyhow = "1.0"
 
 # Logging
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-
-# Async HTTP server
-axum = "0.8"
-tokio = { version = "1", features = ["full"] }
-sqlx = { version = "0.8.6", default-features = false, features = ["runtime-tokio", "sqlite"] }
 
 # Directory paths
 dirs = "5.0"
@@ -70,5 +59,5 @@ default = []
 # Skip license check in debug builds
 skip-in-debug = []
 # Enable license enforcement in release builds.
-# Off by default — add this feature to re-enable server-activation checks.
+# Off by default — add this feature to re-enable local license checks.
 enforce-license = []

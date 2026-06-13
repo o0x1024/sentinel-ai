@@ -27,6 +27,7 @@ pub mod plugin_adapter;
 pub mod terminal;
 mod terminal_output;
 mod tool_search_runtime;
+pub mod tool_result_parse;
 pub mod tool_server;
 mod tool_server_knowledge;
 pub mod tool_timeout;
@@ -45,6 +46,7 @@ pub use output_storage::*;
 #[cfg(feature = "plugins")]
 pub use plugin_adapter::*;
 pub use terminal::*;
+pub use tool_result_parse::*;
 pub use tool_server::*;
 pub use tool_timeout::*;
 pub use workflow_adapter::*;

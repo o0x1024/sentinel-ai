@@ -6,6 +6,7 @@ pub mod ai_tool_messages;
 pub mod api_inventory_requests;
 pub mod asset;
 pub mod bot;
+pub mod bot_observer_queries;
 pub mod bounty;
 pub mod bounty_asset_ops;
 pub mod bounty_change_event_ops;

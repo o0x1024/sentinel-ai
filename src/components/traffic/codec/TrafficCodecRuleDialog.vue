@@ -3,34 +3,34 @@
     <div class="modal-box flex max-h-[90vh] w-[92vw] max-w-3xl flex-col overflow-hidden p-0">
       <div class="border-b border-base-300 px-5 py-4">
         <h3 class="text-center text-lg font-semibold">
-          {{ isEditing ? '编辑 Codec 规则' : '新建 Codec 规则' }}
+          {{ isEditing ? $t('trafficAnalysis.codec.ruleDialog.editTitle') : $t('trafficAnalysis.codec.ruleDialog.createTitle') }}
         </h3>
       </div>
 
       <div class="min-h-0 flex-1 space-y-4 overflow-y-auto px-5 py-4">
         <label class="form-control">
-          <span class="label-text mb-1">规则名称</span>
+          <span class="label-text mb-1">{{ $t('trafficAnalysis.codec.ruleDialog.name') }}</span>
           <input
             v-model="form.name"
             type="text"
             class="input input-bordered"
-            placeholder="输入规则名称"
+            :placeholder="$t('trafficAnalysis.codec.ruleDialog.namePlaceholder')"
           />
         </label>
 
         <details class="rounded-lg border border-base-300 bg-base-100" open>
-          <summary class="cursor-pointer px-4 py-3 text-sm font-semibold">匹配条件</summary>
+          <summary class="cursor-pointer px-4 py-3 text-sm font-semibold">{{ $t('trafficAnalysis.codec.ruleDialog.matchConditions') }}</summary>
           <div class="space-y-3 border-t border-base-300 px-4 py-3">
             <div class="grid gap-2 sm:grid-cols-[6rem_minmax(0,1fr)] sm:items-center">
-              <span class="text-sm text-base-content/70">Host</span>
-              <input v-model="form.host" type="text" class="input input-bordered input-sm" placeholder="例如 api.example.com 或 *.example.com" />
+              <span class="text-sm text-base-content/70">{{ $t('trafficAnalysis.codec.ruleDialog.host') }}</span>
+              <input v-model="form.host" type="text" class="input input-bordered input-sm" :placeholder="$t('trafficAnalysis.codec.ruleDialog.hostPlaceholder')" />
             </div>
             <div class="grid gap-2 sm:grid-cols-[6rem_minmax(0,1fr)] sm:items-center">
-              <span class="text-sm text-base-content/70">Path</span>
-              <input v-model="form.path" type="text" class="input input-bordered input-sm" placeholder="例如 /api/*" />
+              <span class="text-sm text-base-content/70">{{ $t('trafficAnalysis.codec.ruleDialog.path') }}</span>
+              <input v-model="form.path" type="text" class="input input-bordered input-sm" :placeholder="$t('trafficAnalysis.codec.ruleDialog.pathPlaceholder')" />
             </div>
             <div>
-              <span class="mb-2 block text-sm text-base-content/70">Method</span>
+              <span class="mb-2 block text-sm text-base-content/70">{{ $t('trafficAnalysis.codec.ruleDialog.method') }}</span>
               <div class="flex flex-wrap gap-3">
                 <label
                   v-for="method in httpMethods"
@@ -51,10 +51,10 @@
         </details>
 
         <details class="rounded-lg border border-base-300 bg-base-100" open>
-          <summary class="cursor-pointer px-4 py-3 text-sm font-semibold">作用范围</summary>
+          <summary class="cursor-pointer px-4 py-3 text-sm font-semibold">{{ $t('trafficAnalysis.codec.ruleDialog.scope') }}</summary>
           <div class="space-y-3 border-t border-base-300 px-4 py-3">
             <div class="grid gap-2 sm:grid-cols-[6rem_minmax(0,1fr)] sm:items-center">
-              <span class="text-sm text-base-content/70">类型</span>
+              <span class="text-sm text-base-content/70">{{ $t('trafficAnalysis.codec.ruleDialog.scopeTarget') }}</span>
               <select v-model="form.scopeTarget" class="select select-bordered select-sm">
                 <option v-for="option in scopeTargetOptions" :key="option.value" :value="option.value">
                   {{ option.label }}
@@ -65,57 +65,57 @@
               v-if="showScopeFields"
               class="grid gap-2 sm:grid-cols-[6rem_minmax(0,1fr)] sm:items-center"
             >
-              <span class="text-sm text-base-content/70">字段</span>
+              <span class="text-sm text-base-content/70">{{ $t('trafficAnalysis.codec.ruleDialog.scopeFields') }}</span>
               <input
                 v-model="form.scopeFields"
                 type="text"
                 class="input input-bordered input-sm"
-                placeholder="逗号分隔，例如 data, payload.token"
+                :placeholder="$t('trafficAnalysis.codec.ruleDialog.scopeFieldsPlaceholder')"
               />
             </div>
             <div
               v-if="form.scopeTarget === 'header-value'"
               class="grid gap-2 sm:grid-cols-[6rem_minmax(0,1fr)] sm:items-center"
             >
-              <span class="text-sm text-base-content/70">Header</span>
+              <span class="text-sm text-base-content/70">{{ $t('trafficAnalysis.codec.ruleDialog.scopeHeader') }}</span>
               <input
                 v-model="form.scopeHeaderName"
                 type="text"
                 class="input input-bordered input-sm"
-                placeholder="例如 Authorization"
+                :placeholder="$t('trafficAnalysis.codec.ruleDialog.scopeHeaderPlaceholder')"
               />
             </div>
             <div
               v-if="form.scopeTarget === 'regex-match'"
               class="grid gap-2 sm:grid-cols-[6rem_minmax(0,1fr)] sm:items-center"
             >
-              <span class="text-sm text-base-content/70">Pattern</span>
+              <span class="text-sm text-base-content/70">{{ $t('trafficAnalysis.codec.ruleDialog.scopePattern') }}</span>
               <input
                 v-model="form.scopePattern"
                 type="text"
                 class="input input-bordered input-sm font-mono"
-                placeholder="正则表达式"
+                :placeholder="$t('trafficAnalysis.codec.ruleDialog.scopePatternPlaceholder')"
               />
             </div>
           </div>
         </details>
 
         <details class="rounded-lg border border-base-300 bg-base-100" open>
-          <summary class="cursor-pointer px-4 py-3 text-sm font-semibold">解密管道</summary>
+          <summary class="cursor-pointer px-4 py-3 text-sm font-semibold">{{ $t('trafficAnalysis.codec.ruleDialog.pipeline') }}</summary>
           <div class="border-t border-base-300 px-4 py-3">
             <TrafficCodecPipelineEditor v-model="form.steps" />
           </div>
         </details>
 
         <details class="rounded-lg border border-base-300 bg-base-100" open>
-          <summary class="cursor-pointer px-4 py-3 text-sm font-semibold">预览</summary>
+          <summary class="cursor-pointer px-4 py-3 text-sm font-semibold">{{ $t('trafficAnalysis.codec.ruleDialog.preview') }}</summary>
           <div class="space-y-3 border-t border-base-300 px-4 py-3">
             <label class="form-control">
-              <span class="label-text mb-1">输入</span>
+              <span class="label-text mb-1">{{ $t('trafficAnalysis.codec.ruleDialog.previewInput') }}</span>
               <textarea
                 v-model="previewInput"
                 class="textarea textarea-bordered min-h-24 font-mono text-sm"
-                placeholder="输入测试内容"
+                :placeholder="$t('trafficAnalysis.codec.ruleDialog.previewInputPlaceholder')"
               />
             </label>
             <div class="flex flex-wrap gap-2">
@@ -125,7 +125,7 @@
                 :disabled="previewLoading"
                 @click="runPreview('decode')"
               >
-                测试解密
+                {{ $t('trafficAnalysis.codec.ruleDialog.testDecode') }}
               </button>
               <button
                 type="button"
@@ -133,16 +133,16 @@
                 :disabled="previewLoading"
                 @click="runPreview('encode')"
               >
-                测试加密
+                {{ $t('trafficAnalysis.codec.ruleDialog.testEncode') }}
               </button>
             </div>
             <label class="form-control">
-              <span class="label-text mb-1">输出</span>
+              <span class="label-text mb-1">{{ $t('trafficAnalysis.codec.ruleDialog.previewOutput') }}</span>
               <textarea
                 :value="previewOutput"
                 readonly
                 class="textarea textarea-bordered min-h-24 font-mono text-sm"
-                placeholder="测试结果将显示在这里"
+                :placeholder="$t('trafficAnalysis.codec.ruleDialog.previewOutputPlaceholder')"
               />
             </label>
             <p v-if="previewError" class="text-sm text-error">{{ previewError }}</p>
@@ -153,21 +153,22 @@
       </div>
 
       <div class="flex items-center justify-end gap-3 border-t border-base-300 bg-base-100 px-5 py-4">
-        <button class="btn btn-ghost" type="button" @click="close">取消</button>
+        <button class="btn btn-ghost" type="button" @click="close">{{ $t('trafficAnalysis.codec.ruleDialog.cancel') }}</button>
         <button class="btn btn-primary" type="button" :disabled="saving" @click="save">
-          {{ saving ? '保存中...' : '保存' }}
+          {{ saving ? $t('trafficAnalysis.codec.ruleDialog.saving') : $t('trafficAnalysis.codec.ruleDialog.save') }}
         </button>
       </div>
     </div>
 
     <form method="dialog" class="modal-backdrop">
-      <button type="button" @click="close">关闭</button>
+      <button type="button" @click="close">{{ $t('trafficAnalysis.codec.ruleDialog.close') }}</button>
     </form>
   </AppDialog>
 </template>
 
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import AppDialog from '@/components/AppDialog.vue'
 import TrafficCodecPipelineEditor from './TrafficCodecPipelineEditor.vue'
 import { useTrafficCodec } from './useTrafficCodec'
@@ -189,16 +190,24 @@ const emit = defineEmits<{
   closed: []
 }>()
 
+const { t } = useI18n()
 const httpMethods = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'] as const
 
-const scopeTargetOptions: Array<{ value: CodecScopeTarget; label: string }> = [
-  { value: 'json-field', label: 'JSON 字段' },
-  { value: 'query-param', label: 'Query 参数' },
-  { value: 'form-field', label: 'Form 字段' },
-  { value: 'full-body', label: '完整 Body' },
-  { value: 'header-value', label: 'Header 值' },
-  { value: 'regex-match', label: '正则匹配' },
+const scopeTargetValues: CodecScopeTarget[] = [
+  'json-field',
+  'query-param',
+  'form-field',
+  'full-body',
+  'header-value',
+  'regex-match',
 ]
+
+const scopeTargetOptions = computed(() =>
+  scopeTargetValues.map(value => ({
+    value,
+    label: t(`trafficAnalysis.codec.scopeTargets.${value}`),
+  })),
+)
 
 const dialogRef = ref<InstanceType<typeof AppDialog> | null>(null)
 const { testPipeline } = useTrafficCodec()
@@ -329,11 +338,11 @@ function buildRule(): TrafficCodecRule {
 function validate(): boolean {
   validationError.value = ''
   if (!form.name.trim()) {
-    validationError.value = '请填写规则名称'
+    validationError.value = t('trafficAnalysis.codec.ruleDialog.nameRequired')
     return false
   }
   if (form.steps.length === 0) {
-    validationError.value = '至少需要一个管道步骤'
+    validationError.value = t('trafficAnalysis.codec.ruleDialog.stepsRequired')
     return false
   }
   return true
@@ -349,7 +358,7 @@ async function save() {
     emit('saved', rule)
     close()
   } catch (error) {
-    validationError.value = error instanceof Error ? error.message : '保存失败'
+    validationError.value = error instanceof Error ? error.message : t('trafficAnalysis.codec.ruleDialog.saveFailed')
   } finally {
     saving.value = false
   }
@@ -364,10 +373,10 @@ async function runPreview(direction: 'decode' | 'encode') {
     if (result.success) {
       previewOutput.value = result.content
     } else {
-      previewError.value = result.error ?? '测试失败'
+      previewError.value = result.error ?? t('trafficAnalysis.codec.ruleDialog.testFailed')
     }
   } catch (error) {
-    previewError.value = error instanceof Error ? error.message : '测试失败'
+    previewError.value = error instanceof Error ? error.message : t('trafficAnalysis.codec.ruleDialog.testFailed')
   } finally {
     previewLoading.value = false
   }

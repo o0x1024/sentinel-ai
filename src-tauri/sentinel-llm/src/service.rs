@@ -18,7 +18,9 @@ use tracing::{debug, error, info};
 
 use crate::agent::validate_config;
 use crate::config::LlmConfig;
-use crate::log::{build_log_session_id, log_error_response, log_request, log_response};
+use crate::log::{
+    build_log_session_id, log_context_messages, log_error_response, log_request, log_response,
+};
 use crate::message::{ChatMessage, ImageAttachment};
 use crate::types::AiConfig;
 use crate::usage::TokenUsage;
@@ -253,6 +255,20 @@ impl AiService {
             user_prompt,
         );
 
+        if !history.is_empty() {
+            let context_pairs: Vec<(&str, &str)> = history
+                .iter()
+                .map(|m| (m.role.as_str(), m.content.as_str()))
+                .collect();
+            log_context_messages(
+                &session_id,
+                effective_conversation_id,
+                &provider,
+                &model,
+                &context_pairs,
+            );
+        }
+
         // 根据 provider 创建 agent 并执行流式调用
         let content_result: Result<String> = match provider_for_agent.as_str() {
             "openai" => {
@@ -420,6 +436,33 @@ impl AiService {
         Ok(content)
     }
 
+    fn apply_generation_settings<M>(
+        llm_config: &LlmConfig,
+        builder: rig::agent::AgentBuilder<M>,
+    ) -> Result<rig::agent::AgentBuilder<M>>
+    where
+        M: rig::completion::CompletionModel,
+    {
+        Self::apply_generation_settings_with_params(llm_config, builder, None)
+    }
+
+    fn apply_generation_settings_with_params<M>(
+        llm_config: &LlmConfig,
+        mut builder: rig::agent::AgentBuilder<M>,
+        base_params: Option<serde_json::Value>,
+    ) -> Result<rig::agent::AgentBuilder<M>>
+    where
+        M: rig::completion::CompletionModel,
+    {
+        if let Some(temp) = llm_config.temperature {
+            builder = builder.temperature(temp as f64);
+        }
+        if let Some(max_tokens) = llm_config.max_tokens {
+            builder = builder.max_tokens(max_tokens as u64);
+        }
+        llm_config.apply_extra_body(builder, base_params)
+    }
+
     async fn stream_with_openai<F>(
         &self,
         model: &str,
@@ -453,17 +496,20 @@ impl AiService {
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?
                 .completions_api();
 
-            let agent = client.agent(model).preamble(preamble).build();
+            let builder = client.agent(model).preamble(preamble);
+            let agent = Self::apply_generation_settings(&llm_config, builder)?.build();
             self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
                 .await
         } else {
             info!("Using Responses API for official OpenAI");
-            let client: openai::Client = openai::Client::builder()
-                .api_key(api_key)
+            let builder = openai::Client::builder().api_key(api_key);
+            let client: openai::Client = llm_config
+                .apply_extra_headers(builder)?
                 .build()
                 .map_err(|e| anyhow::anyhow!("Failed to build OpenAI client: {:?}", e))?;
 
-            let agent = client.agent(model).preamble(preamble).build();
+            let builder = client.agent(model).preamble(preamble);
+            let agent = Self::apply_generation_settings(&llm_config, builder)?.build();
             self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
                 .await
         }
@@ -497,15 +543,18 @@ impl AiService {
             builder = builder.base_url(base_url);
         }
 
-        let client = builder
+        let llm_config = self.to_llm_config();
+        let client = llm_config
+            .apply_extra_headers(builder)?
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build Moonshot client: {:?}", e))?;
 
-        let mut builder = client.agent(model).preamble(preamble);
+        let builder = client.agent(model).preamble(preamble);
+        let mut base_params = None;
         if model.to_lowercase().contains("kimi-k2.5") {
-            builder = builder.additional_params(json!({ "thinking": { "type": "disabled" } }));
+            base_params = Some(json!({ "thinking": { "type": "disabled" } }));
         }
-        let agent = builder.build();
+        let agent = Self::apply_generation_settings_with_params(&llm_config, builder, base_params)?.build();
         self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
             .await
     }
@@ -538,15 +587,14 @@ impl AiService {
             }
         }
 
-        let client = builder
+        let llm_config = self.to_llm_config();
+        let client = llm_config
+            .apply_extra_headers(builder)?
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build Anthropic client: {:?}", e))?;
 
-        let agent = client
-            .agent(model)
-            .preamble(preamble)
-            .max_tokens(4096)
-            .build();
+        let builder = client.agent(model).preamble(preamble);
+        let agent = Self::apply_generation_settings(&llm_config, builder)?.build();
         self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
             .await
     }
@@ -567,11 +615,12 @@ impl AiService {
         let client = gemini::Client::from_env();
         let gen_cfg = GenerationConfig::default();
         let cfg = AdditionalParameters::default().with_config(gen_cfg);
-        let agent = client
-            .agent(model)
-            .preamble(preamble)
-            .additional_params(serde_json::to_value(cfg).unwrap())
-            .build();
+        let builder = client.agent(model).preamble(preamble);
+        let agent = Self::apply_generation_settings_with_params(
+            &self.to_llm_config(),
+            builder,
+            Some(serde_json::to_value(cfg).unwrap()),
+        )?.build();
         self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
             .await
     }
@@ -590,7 +639,8 @@ impl AiService {
     {
         use rig::providers::ollama;
         let client = ollama::Client::from_env();
-        let agent = client.agent(model).preamble(preamble).build();
+        let builder = client.agent(model).preamble(preamble);
+        let agent = Self::apply_generation_settings(&self.to_llm_config(), builder)?.build();
         self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
             .await
     }
@@ -622,11 +672,14 @@ impl AiService {
             builder = builder.base_url(base_url);
         }
 
-        let client = builder
+        let llm_config = self.to_llm_config();
+        let client = llm_config
+            .apply_extra_headers(builder)?
             .build()
             .map_err(|e| anyhow::anyhow!("Failed to build DeepSeek client: {}", e))?;
 
-        let agent = client.agent(model).preamble(preamble).build();
+        let builder = client.agent(model).preamble(preamble);
+        let agent = Self::apply_generation_settings(&llm_config, builder)?.build();
         self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
             .await
     }
@@ -644,8 +697,16 @@ impl AiService {
         F: FnMut(StreamChunk) -> bool,
     {
         use rig::providers::openrouter;
-        let client = openrouter::Client::from_env();
-        let agent = client.agent(model).preamble(preamble).build();
+        let api_key = std::env::var("OPENROUTER_API_KEY")
+            .map_err(|_| anyhow::anyhow!("OPENROUTER_API_KEY not set"))?;
+        let builder = openrouter::Client::builder().api_key(api_key);
+        let llm_config = self.to_llm_config();
+        let client = llm_config
+            .apply_extra_headers(builder)?
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build OpenRouter client: {:?}", e))?;
+        let builder = client.agent(model).preamble(preamble);
+        let agent = Self::apply_generation_settings(&llm_config, builder)?.build();
         self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
             .await
     }
@@ -663,8 +724,16 @@ impl AiService {
         F: FnMut(StreamChunk) -> bool,
     {
         use rig::providers::xai;
-        let client = xai::Client::from_env();
-        let agent = client.agent(model).preamble(preamble).build();
+        let api_key =
+            std::env::var("XAI_API_KEY").map_err(|_| anyhow::anyhow!("XAI_API_KEY not set"))?;
+        let builder = xai::Client::builder().api_key(api_key);
+        let llm_config = self.to_llm_config();
+        let client = llm_config
+            .apply_extra_headers(builder)?
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build xAI client: {:?}", e))?;
+        let builder = client.agent(model).preamble(preamble);
+        let agent = Self::apply_generation_settings(&llm_config, builder)?.build();
         self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
             .await
     }
@@ -682,8 +751,16 @@ impl AiService {
         F: FnMut(StreamChunk) -> bool,
     {
         use rig::providers::groq;
-        let client = groq::Client::from_env();
-        let agent = client.agent(model).preamble(preamble).build();
+        let api_key =
+            std::env::var("GROQ_API_KEY").map_err(|_| anyhow::anyhow!("GROQ_API_KEY not set"))?;
+        let builder = groq::Client::builder().api_key(api_key);
+        let llm_config = self.to_llm_config();
+        let client = llm_config
+            .apply_extra_headers(builder)?
+            .build()
+            .map_err(|e| anyhow::anyhow!("Failed to build Groq client: {:?}", e))?;
+        let builder = client.agent(model).preamble(preamble);
+        let agent = Self::apply_generation_settings(&llm_config, builder)?.build();
         self.execute_stream(agent, user_message, chat_history, timeout, on_chunk)
             .await
     }

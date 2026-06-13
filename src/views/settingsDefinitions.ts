@@ -12,9 +12,10 @@ export interface DatabaseConfig {
   query_timeout?: number
 }
 
+/** Aligned with Claude Code DEFAULT_MAX_RESULT_SIZE_CHARS (50K). */
 export const OUTPUT_STORAGE_THRESHOLD_MIN = 8000
-export const OUTPUT_STORAGE_THRESHOLD_RECOMMENDED_MAX = 32000
-export const OUTPUT_STORAGE_THRESHOLD_DEFAULT = 16000
+export const OUTPUT_STORAGE_THRESHOLD_MAX = 100_000
+export const OUTPUT_STORAGE_THRESHOLD_DEFAULT = 50_000
 
 export const settingsCategories = [
   { id: 'ai', icon: 'fas fa-robot' },

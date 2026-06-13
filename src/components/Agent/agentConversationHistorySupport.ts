@@ -95,10 +95,14 @@ export const buildConversationTimeline = (
         return
       }
 
-      if (parsedMetadata?.kind === 'skill_loaded') {
+      if (parsedMetadata?.kind === 'skill_loaded' || parsedMetadata?.kind === 'skill_forked') {
+        const skillName = parsedMetadata?.skill_name || 'unknown'
+        const skillId = parsedMetadata?.skill_id || 'unknown'
         const content =
           row.content ||
-          `Skill loaded: ${parsedMetadata?.skill_name || 'unknown'} (${parsedMetadata?.skill_id || 'unknown'})`
+          (parsedMetadata?.kind === 'skill_forked'
+            ? `Skill forked: ${skillName} (${skillId})`
+            : `Skill loaded: ${skillName} (${skillId})`)
         const restMetadata = { ...(parsedMetadata || {}) }
         delete restMetadata.tools
         delete restMetadata.tools_preview

@@ -26,7 +26,7 @@ describe('AISettings', () => {
           ai: {
             temperature: 0.7,
             maxTokens: 2000,
-            outputStorageThreshold: 16000,
+            outputStorageThreshold: 50000,
             maxTurns: 100,
           },
         },

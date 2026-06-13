@@ -138,9 +138,10 @@ impl MemoryManagerTool {
     pub const NAME: &'static str = "memory";
     pub const DESCRIPTION: &'static str = concat!(
         "Long-term memory for durable agent knowledge across tasks. ",
-        "Use action='retrieve' before non-trivial work when prior fixes, commands, environment quirks, ",
-        "or workflows may help. Use action='store' after finishing a task to save reusable findings, ",
-        "solutions, and playbooks. Do not store transient chat filler or incomplete guesses."
+        "Relevant memory is usually injected automatically at run start in [RetrievedMemory]. ",
+        "Use action='retrieve' only for supplemental lookup with a specific query when automatic context is insufficient. ",
+        "Use action='store' after finishing a task to save reusable findings, solutions, and playbooks. ",
+        "Do not store transient chat filler or incomplete guesses."
     );
 }
 

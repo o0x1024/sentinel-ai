@@ -1,15 +1,34 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use sentinel_tools::dynamic_tool::{DynamicTool, DynamicToolDef, ToolExecutor};
 use serde_json::{json, Value};
 
-const MODEL_TOOL_RESULT_MAX_CHARS: usize = 12_000;
-const MODEL_TOOL_RESULT_FIELD_MAX_CHARS: usize = 4_000;
-const MODEL_TOOL_RESULT_ARRAY_MAX_ITEMS: usize = 20;
+use super::tool_result_limits::{
+    TOOL_RESULT_ARRAY_MAX_ITEMS, TOOL_RESULT_FIELD_MAX_CHARS, TOOL_RESULT_MAX_CHARS,
+};
+
+/// Holds skill metadata extracted from a `skills` invoke result for executor config
+/// and compaction re-injection tracking.
+#[derive(Debug, Clone)]
+pub(super) struct PendingSkillInjection {
+    pub skill_id: String,
+    pub skill_name: String,
+    pub body: String,
+    pub allowed_tools: Vec<String>,
+    pub model_override: Option<String>,
+    pub effort: Option<String>,
+}
+
+pub(super) type SkillInjectionSink = Arc<Mutex<Vec<PendingSkillInjection>>>;
+
+pub(super) fn new_skill_injection_sink() -> SkillInjectionSink {
+    Arc::new(Mutex::new(Vec::new()))
+}
 
 pub(super) fn wrap_dynamic_tool_for_model_context(
     tool: DynamicTool,
     execution_id: &str,
+    skill_injection_sink: Option<SkillInjectionSink>,
 ) -> DynamicTool {
     let original_def = tool.def().clone();
     let original_tool = DynamicTool::new(original_def.clone());
@@ -19,6 +38,7 @@ pub(super) fn wrap_dynamic_tool_for_model_context(
         let original_tool = original_tool.clone();
         let tool_name = tool_name.clone();
         let execution_id = execution_id.clone();
+        let sink = skill_injection_sink.clone();
         Box::pin(async move {
             use rig::tool::Tool;
 
@@ -26,6 +46,14 @@ pub(super) fn wrap_dynamic_tool_for_model_context(
                 .call(args)
                 .await
                 .map_err(|error| error.to_string())?;
+
+            let result =
+                extract_skill_metadata_for_executor(&tool_name, result, sink.as_ref()).await;
+
+            if should_skip_compaction_for_tool_result(&tool_name, &result) {
+                return Ok(result);
+            }
+
             Ok(compact_tool_value_for_model_context(&tool_name, &execution_id, result).await)
         })
     });
@@ -37,6 +65,99 @@ pub(super) fn wrap_dynamic_tool_for_model_context(
     })
 }
 
+fn should_skip_compaction_for_tool_result(tool_name: &str, result: &Value) -> bool {
+    tool_name == "skills"
+        && result
+            .get("action")
+            .and_then(|value| value.as_str())
+            == Some("invoke")
+}
+
+/// If this is a `skills.invoke` result, extract executor metadata into the sink while
+/// keeping the full inline skill body in the tool result for the model.
+async fn extract_skill_metadata_for_executor(
+    tool_name: &str,
+    mut result: Value,
+    sink: Option<&SkillInjectionSink>,
+) -> Value {
+    if tool_name != "skills" {
+        return result;
+    }
+    let Some(obj) = result.as_object_mut() else {
+        return result;
+    };
+    let action = obj
+        .get("action")
+        .and_then(|v| v.as_str())
+        .unwrap_or_default()
+        .to_string();
+    if action != "invoke" {
+        return result;
+    }
+    let body = obj
+        .get("content")
+        .and_then(|v| v.as_str())
+        .filter(|value| !value.trim().is_empty())
+        .map(str::to_string)
+        .unwrap_or_default();
+    if body.is_empty() {
+        return result;
+    }
+    let skill_id = obj
+        .get("skill")
+        .and_then(|s| s.get("id"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_string();
+    let skill_name = obj
+        .get("skill")
+        .and_then(|s| s.get("name"))
+        .and_then(|v| v.as_str())
+        .unwrap_or(&skill_id)
+        .to_string();
+    let allowed_tools = obj
+        .get("allowed_tools")
+        .and_then(|v| v.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| item.as_str().map(str::to_string))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let model_override = obj
+        .get("model_override")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    let effort = obj.get("effort").and_then(|v| v.as_str()).map(str::to_string);
+    obj.remove("allowed_tools");
+    obj.remove("model_override");
+    obj.remove("effort");
+    if let Some(sink) = sink {
+        if let Ok(mut guard) = sink.lock() {
+            let tracking_body =
+                crate::agents::skills_injection::extract_skill_body_from_inline_tool_result(
+                    &body,
+                );
+            tracing::info!(
+                "Tracked skill metadata for inline tool result: skill_id={}, skill_name={}, body_chars={}",
+                skill_id,
+                skill_name,
+                tracking_body.len()
+            );
+            guard.push(PendingSkillInjection {
+                skill_id,
+                skill_name,
+                body: tracking_body,
+                allowed_tools,
+                model_override,
+                effort,
+            });
+        }
+    }
+    result
+}
+
 async fn compact_tool_value_for_model_context(
     tool_name: &str,
     execution_id: &str,
@@ -46,7 +167,7 @@ async fn compact_tool_value_for_model_context(
         return value;
     };
     let original_chars = rendered.chars().count();
-    if original_chars <= MODEL_TOOL_RESULT_MAX_CHARS {
+    if original_chars <= TOOL_RESULT_MAX_CHARS {
         return value;
     }
 
@@ -63,7 +184,7 @@ async fn compact_tool_value_for_model_context(
         }
     }
     if serde_json::to_string(&compacted)
-        .map(|value| value.chars().count() <= MODEL_TOOL_RESULT_MAX_CHARS)
+        .map(|value| value.chars().count() <= TOOL_RESULT_MAX_CHARS)
         .unwrap_or(false)
     {
         return compacted;
@@ -71,7 +192,7 @@ async fn compact_tool_value_for_model_context(
 
     let mut replacement = json!({
         "_context_microcompact": build_microcompact_metadata(tool_name, original_chars, stored_artifact.as_ref()),
-        "preview": compact_text_preview(&rendered, MODEL_TOOL_RESULT_MAX_CHARS),
+        "preview": compact_text_preview(&rendered, TOOL_RESULT_MAX_CHARS),
     });
     if let Some(artifact) = stored_artifact {
         replacement["stored_artifacts"] = json!([artifact]);
@@ -134,12 +255,12 @@ fn compact_json_value_for_model(value: &mut Value) {
         }
         Value::Array(items) => {
             let original_len = items.len();
-            if original_len > MODEL_TOOL_RESULT_ARRAY_MAX_ITEMS {
-                items.truncate(MODEL_TOOL_RESULT_ARRAY_MAX_ITEMS);
+            if original_len > TOOL_RESULT_ARRAY_MAX_ITEMS {
+                items.truncate(TOOL_RESULT_ARRAY_MAX_ITEMS);
                 items.push(json!({
                     "_context_microcompact_array": {
                         "original_items": original_len,
-                        "kept_items": MODEL_TOOL_RESULT_ARRAY_MAX_ITEMS
+                        "kept_items": TOOL_RESULT_ARRAY_MAX_ITEMS
                     }
                 }));
             }
@@ -148,9 +269,9 @@ fn compact_json_value_for_model(value: &mut Value) {
             }
         }
         Value::String(text) => {
-            if text.chars().count() > MODEL_TOOL_RESULT_FIELD_MAX_CHARS {
+            if text.chars().count() > TOOL_RESULT_FIELD_MAX_CHARS {
                 let original_chars = text.chars().count();
-                *text = compact_text_preview(text, MODEL_TOOL_RESULT_FIELD_MAX_CHARS);
+                *text = compact_text_preview(text, TOOL_RESULT_FIELD_MAX_CHARS);
                 text.push_str(&format!(
                     "\n[context microcompact: original field chars={}]",
                     original_chars
@@ -232,7 +353,8 @@ mod tests {
         };
 
         let execution_id = format!("test-{}", uuid::Uuid::new_v4());
-        let wrapped = wrap_dynamic_tool_for_model_context(DynamicTool::new(def), &execution_id);
+        let wrapped =
+            wrap_dynamic_tool_for_model_context(DynamicTool::new(def), &execution_id, None);
         let result = {
             use rig::tool::Tool;
             wrapped
@@ -245,6 +367,57 @@ mod tests {
         assert!(rendered.contains("_context_microcompact"));
         assert!(rendered.contains("raw_result_artifact"));
         assert!(rendered.contains("stored_artifacts"));
-        assert!(rendered.chars().count() <= MODEL_TOOL_RESULT_MAX_CHARS + 2_000);
+        use crate::agents::executor::tool_result_limits::{
+            TOOL_RESULT_COMPACT_SLACK_CHARS, TOOL_RESULT_MAX_CHARS,
+        };
+        assert!(
+            rendered.chars().count() <= TOOL_RESULT_MAX_CHARS + TOOL_RESULT_COMPACT_SLACK_CHARS
+        );
+    }
+
+    #[tokio::test]
+    async fn fork_skill_result_is_not_tracked_for_metadata() {
+        let sink = new_skill_injection_sink();
+        let result = extract_skill_metadata_for_executor(
+            "skills",
+            json!({
+                "action": "fork",
+                "skill": {"id": "review", "name": "Review"},
+                "content": "Skill completed in forked sub-agent.",
+            }),
+            Some(&sink),
+        )
+        .await;
+
+        assert_eq!(result.get("action").and_then(|v| v.as_str()), Some("fork"));
+        assert!(sink.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn invoke_skill_result_keeps_inline_content_and_skips_compaction() {
+        let sink = new_skill_injection_sink();
+        let inline_content = format!(
+            "Skill loaded: audit\n\n<skill>\n<name>audit</name>\n<path>skill://audit/SKILL.md</path>\n{}\n</skill>",
+            "x".repeat(20_000)
+        );
+        let result = extract_skill_metadata_for_executor(
+            "skills",
+            json!({
+                "action": "invoke",
+                "skill": {"id": "audit", "name": "audit"},
+                "content": inline_content,
+                "allowed_tools": ["grep"],
+                "model_override": "gpt-4o",
+            }),
+            Some(&sink),
+        )
+        .await;
+
+        assert!(result.get("content").and_then(|v| v.as_str()).is_some());
+        assert!(result.get("allowed_tools").is_none());
+        assert!(result.get("model_override").is_none());
+        assert_eq!(sink.lock().unwrap().len(), 1);
+        assert_eq!(sink.lock().unwrap()[0].body.chars().count(), 20_000);
+        assert!(should_skip_compaction_for_tool_result("skills", &result));
     }
 }

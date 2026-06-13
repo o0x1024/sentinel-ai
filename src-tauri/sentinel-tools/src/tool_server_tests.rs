@@ -79,13 +79,18 @@ async fn test_tool_server_init() {
 
     let skills_schema = skills.input_schema.to_string();
     assert!(
-        skills_schema.contains("\"read_skill_file\""),
-        "skills schema should expose read_skill_file action: {}",
+        skills_schema.contains("\"skill\""),
+        "skills schema should expose skill parameter: {}",
         skills_schema
     );
     assert!(
         !skills_schema.contains("\"read_file\""),
-        "skills schema must not expose ambiguous read_file action: {}",
+        "skills schema must not expose read_file action: {}",
+        skills_schema
+    );
+    assert!(
+        !skills_schema.contains("\"list\""),
+        "skills schema must not expose list action: {}",
         skills_schema
     );
 

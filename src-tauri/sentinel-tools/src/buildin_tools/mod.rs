@@ -62,7 +62,10 @@ pub use route_discovery::RouteDiscoveryTool;
 pub use search_exploit::SearchExploitTool;
 pub use shell::ShellTool;
 pub use skill_creator::SkillCreatorTool;
-pub use skills::SkillsTool;
+pub use skills::{
+    set_skills_fork_executor, set_skills_parent_execution_id, SkillsForkRequest, SkillsForkResult,
+    SkillsTool,
+};
 #[cfg(feature = "db")]
 pub use sops::{set_sops_app_handle, SopsTool};
 #[cfg(feature = "plugins")]

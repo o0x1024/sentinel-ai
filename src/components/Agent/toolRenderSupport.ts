@@ -33,6 +33,10 @@ export const isSearchToolName = (toolName: unknown): boolean => {
   return SEARCH_TOOL_NAMES.has(normalized)
 }
 
+export const isSkillsToolName = (toolName: unknown): boolean => {
+  return String(toolName || '').trim().toLowerCase() === 'skills'
+}
+
 export const getToolHeaderDetail = (params: {
   toolName?: unknown
   args?: unknown

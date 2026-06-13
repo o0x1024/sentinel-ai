@@ -262,6 +262,42 @@ impl<D: RagDatabase> RagService<D> {
             .await
     }
 
+    pub async fn delete_memory_lexical_document(&self, memory_id: &str) -> Result<bool> {
+        self.memory_lexical_index.delete_document(memory_id).await
+    }
+
+    pub async fn delete_memory_vector_projections(
+        &self,
+        collection_name: &str,
+        memory_id: &str,
+    ) -> Result<usize> {
+        let Some(collection) = self
+            .database
+            .get_rag_collection_by_name(collection_name)
+            .await?
+        else {
+            return Ok(0);
+        };
+
+        let documents = self.database.get_rag_documents(&collection.id).await?;
+        let mut deleted = 0usize;
+        for document in documents {
+            let matches = document
+                .metadata
+                .get("memory_id")
+                .map(|value| value == memory_id)
+                .unwrap_or(false)
+                || document.file_name.contains(memory_id);
+            if !matches {
+                continue;
+            }
+            self.delete_document(&document.id).await?;
+            deleted += 1;
+        }
+
+        Ok(deleted)
+    }
+
     pub async fn backfill_memory_lexical_from_collection(
         &self,
         collection_name: &str,

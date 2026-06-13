@@ -54,7 +54,7 @@ static PARENT_SEMAPHORES: Lazy<Arc<RwLock<HashMap<String, Arc<Semaphore>>>>> =
     Lazy::new(|| Arc::new(RwLock::new(HashMap::new())));
 
 const MAX_SUBAGENTS_PER_PARENT: usize = 3;
-const MAX_SUBAGENT_RECURSION_DEPTH: usize = 4;
+pub const MAX_SUBAGENT_RECURSION_DEPTH: usize = 4;
 const SUBAGENT_TOOL_IDS: [&str; 4] = ["spawn_agent", "wait_agents", "list_agents", "close_agent"];
 
 // ============================================================================
@@ -224,11 +224,10 @@ fn subagent_context_policy() -> ContextPolicy {
     ContextPolicy::subagent()
 }
 
-fn max_iterations_for_verification_level(requested: usize) -> usize {
+pub fn max_iterations_for_verification_level(requested: usize) -> usize {
     requested.clamp(1, 500)
 }
 
-/// Build subagent task with parent context reference
 fn build_subagent_task(
     parent_task: &str,
     subagent_task: &str,
@@ -348,6 +347,73 @@ async fn get_parent_context(parent_id: &str) -> Result<SubagentParentContext, Su
         .get(parent_id)
         .cloned()
         .ok_or_else(|| SubagentToolError::ParentContextNotFound(parent_id.to_string()))
+}
+
+pub async fn get_subagent_parent_context(
+    parent_id: &str,
+) -> Result<SubagentParentContext, SubagentToolError> {
+    get_parent_context(parent_id).await
+}
+
+pub fn get_subagent_app_handle() -> Result<&'static tauri::AppHandle, SubagentToolError> {
+    get_app_handle()
+}
+
+pub fn build_subagent_system_prompt_for_role(base_prompt: String, role: Option<&str>) -> String {
+    build_subagent_system_prompt(base_prompt, role)
+}
+
+pub fn merge_skill_fork_tool_config(
+    parent_config: ToolConfig,
+    skill_allowed_tools: Option<&[String]>,
+) -> ToolConfig {
+    let mut config = normalize_tool_config(parent_config);
+    let Some(tools) = skill_allowed_tools else {
+        return config;
+    };
+
+    for tool in tools {
+        let normalized = tool.trim();
+        if normalized.is_empty() {
+            continue;
+        }
+        if !config.preselected_tools.iter().any(|item| item == normalized) {
+            config.preselected_tools.push(normalized.to_string());
+        }
+        if !config.allowed_tools.iter().any(|item| item == normalized) {
+            config.allowed_tools.push(normalized.to_string());
+        }
+    }
+
+    config
+}
+
+pub async fn acquire_subagent_permits(
+    parent_execution_id: &str,
+    timeout_secs: u64,
+) -> Result<
+    (
+        tokio::sync::OwnedSemaphorePermit,
+        tokio::sync::OwnedSemaphorePermit,
+    ),
+    String,
+> {
+    let acquire_timeout = tokio::time::Duration::from_secs(timeout_secs.max(1));
+    let global_permit = tokio::time::timeout(acquire_timeout, GLOBAL_SEMAPHORE.clone().acquire_owned())
+        .await
+        .map_err(|_| "Timed out waiting for global subagent concurrency permit".to_string())?
+        .map_err(|_| "Failed to acquire global subagent concurrency permit".to_string())?;
+
+    let parent_sem = get_or_create_parent_semaphore(parent_execution_id).await;
+    let parent_permit =
+        tokio::time::timeout(acquire_timeout, parent_sem.acquire_owned())
+            .await
+            .map_err(|_| {
+                "Timed out waiting for parent subagent concurrency permit".to_string()
+            })?
+            .map_err(|_| "Failed to acquire parent subagent concurrency permit".to_string())?;
+
+    Ok((global_permit, parent_permit))
 }
 
 async fn create_subagent_run(app_handle: &tauri::AppHandle, run: &SubagentRun) {
@@ -567,6 +633,7 @@ async fn export_parent_history(
             } else if let Err(e) = sentinel_tools::output_storage::store_history_on_host(
                 &parent_history_content,
                 Some(parent_execution_id),
+                None,
             )
             .await
             {
@@ -1253,5 +1320,15 @@ pub fn init_subagent_executor() {
     });
     set_close_agent_executor(close_executor);
 
-    tracing::info!("Subagent executors initialized (spawn/wait/list/close)");
+    use sentinel_tools::buildin_tools::skills::{set_skills_fork_executor, SkillsForkRequest, SkillsForkResult};
+    let skills_fork_executor = std::sync::Arc::new(|request: SkillsForkRequest| {
+        Box::pin(async move {
+            super::skill_fork::execute_forked_skill(request).await
+        }) as std::pin::Pin<
+            Box<dyn std::future::Future<Output = Result<SkillsForkResult, String>> + Send>,
+        >
+    });
+    set_skills_fork_executor(skills_fork_executor);
+
+    tracing::info!("Subagent executors initialized (spawn/wait/list/close, skill fork)");
 }

@@ -393,6 +393,8 @@ pub fn setup_app(app: &mut tauri::App<tauri::Wry>) -> Result<(), Box<dyn std::er
         handle.manage(Arc::new(tokio::sync::RwLock::new(
             MonitorSchedulerState::new(),
         )));
+        let mission_scheduler_state = Arc::new(crate::services::mission_scheduler::MissionSchedulerState::default());
+        handle.manage(mission_scheduler_state.clone());
         handle.manage(workflow_engine);
         handle.manage(workflow_scheduler);
         // Initialize asset enrichment service
@@ -597,6 +599,7 @@ pub fn setup_app(app: &mut tauri::App<tauri::Wry>) -> Result<(), Box<dyn std::er
         // Auto-start mission scheduler with startup recovery
         let db_for_mission_scheduler = db_service.clone();
         let handle_for_mission_scheduler = handle.clone();
+        let mission_scheduler_state_for_spawn = mission_scheduler_state.clone();
         tokio::spawn(async move {
             tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
 
@@ -609,6 +612,7 @@ pub fn setup_app(app: &mut tauri::App<tauri::Wry>) -> Result<(), Box<dyn std::er
                 ai_manager_for_mission_scheduler,
                 handle_for_mission_scheduler,
                 cancel,
+                mission_scheduler_state_for_spawn,
             );
             tracing::info!("Mission scheduler auto-started");
         });

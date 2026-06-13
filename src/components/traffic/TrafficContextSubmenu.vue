@@ -19,7 +19,8 @@
         @click="item.onClick"
       >
         <i v-if="item.iconClass" :class="item.iconClass"></i>
-        <span>{{ t(`${labelPrefix}.${item.labelKey}`) }}</span>
+        <span v-if="item.labelText">{{ item.labelText }}</span>
+        <span v-else>{{ t(`${labelPrefix}.${item.labelKey}`) }}</span>
         <span v-if="item.suffixText" class="truncate text-base-content/70">: {{ item.suffixText }}</span>
       </button>
       <div v-if="submenu.footerItems?.length" class="divider my-1 h-px"></div>

@@ -516,9 +516,10 @@
                   <span class="badge badge-info badge-sm">Dynamic Context</span>
                 </label>
                 <div class="flex items-center gap-4">
-                  <input v-model.number="settings.ai.outputStorageThreshold" type="range" min="8000" max="32000" step="1000"
+                  <input v-model.number="settings.ai.outputStorageThreshold" type="range"
+                    :min="OUTPUT_STORAGE_THRESHOLD_MIN" :max="OUTPUT_STORAGE_THRESHOLD_MAX" step="1000"
                     class="range range-info flex-1" @change="saveAiConfig" />
-                  <span class="text-sm min-w-[60px]">{{ (settings.ai.outputStorageThreshold || 16000) / 1000 }}K</span>
+                  <span class="text-sm min-w-[60px]">{{ (settings.ai.outputStorageThreshold || OUTPUT_STORAGE_THRESHOLD_DEFAULT) / 1000 }}K</span>
                 </div>
                 <label class="label">
                   <span class="label-text-alt">{{ t('settings.ai.outputStorageThresholdHint') }}</span>
@@ -998,6 +999,11 @@ import {
 } from './aiSettingsStatsSupport'
 import { useAiSettingsManualEditor } from './useAiSettingsManualEditor'
 import { useAiSettingsServiceIntegrations } from './useAiSettingsServiceIntegrations'
+import {
+  OUTPUT_STORAGE_THRESHOLD_DEFAULT,
+  OUTPUT_STORAGE_THRESHOLD_MAX,
+  OUTPUT_STORAGE_THRESHOLD_MIN,
+} from '@/views/settingsDefinitions'
 
 const { t } = useI18n()
 const isAvailableModelsExpanded = ref(false)

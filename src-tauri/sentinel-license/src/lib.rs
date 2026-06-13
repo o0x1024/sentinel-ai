@@ -9,27 +9,19 @@
 
 mod anti_debug;
 mod crypto;
-mod entitlement_token;
 mod integrity;
 mod machine_id;
 mod obfuscate;
 mod storage;
-mod trial;
 mod validator;
 
 pub use anti_debug::is_debugger_present;
 pub use crypto::{generate_keypair, sign_license, KeyPair, LicenseKey};
-pub use entitlement_token::{
-    clear_entitlement_token, get_entitlement_token_status, get_valid_entitlement_claims,
-    sign_entitlement_token, store_entitlement_token, EntitlementClaims, EntitlementTokenStatus,
-    SignedEntitlementToken,
-};
 pub use integrity::{
     function_checksum, is_integrity_ok, verify_function_checksum, verify_integrity,
 };
 pub use machine_id::MachineId;
 pub use storage::LicenseStorage;
-pub use trial::{get_or_create_trial_status, has_active_trial, TrialStatus};
 pub use validator::{LicenseStatus, LicenseValidator, ValidationResult};
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -68,38 +60,12 @@ impl LicensedFeature {
         }
     }
 
-    pub fn entitlement_feature_id(self) -> Option<&'static str> {
-        match self {
-            LicensedFeature::AiRuntime => Some("ai_runtime"),
-            LicensedFeature::BugBounty => Some("bug_bounty"),
-            LicensedFeature::BotConsole => Some("bot_console"),
-            LicensedFeature::PluginCatalogRead => Some("plugin_catalog_access"),
-            LicensedFeature::PluginCatalogWrite => Some("plugin_catalog_write"),
-            LicensedFeature::PluginCatalogDelete => Some("plugin_catalog_delete"),
-            LicensedFeature::Rag
-            | LicensedFeature::ToolExecution
-            | LicensedFeature::TrafficAnalysis
-            | LicensedFeature::WorkflowExecution => None,
-        }
-    }
-
-    pub fn requires_entitlement_token(self) -> bool {
-        self.entitlement_feature_id().is_some()
-    }
-
     pub fn license_denial_message(self) -> String {
         format!("License required for {}", self.display_name())
     }
-
-    pub fn entitlement_denial_message(self) -> String {
-        format!(
-            "Valid entitlement token required for {}",
-            self.display_name()
-        )
-    }
 }
 
-/// Controls whether release builds require server activation.
+/// Controls whether release builds require local license activation.
 ///
 /// Driven by the `enforce-license` Cargo feature (off by default).
 /// To re-enable: add `enforce-license` to the crate's active features.
@@ -142,8 +108,8 @@ pub fn initialize() -> ValidationResult {
             return ValidationResult::Invalid(obfuscate::decrypt_str("debug_detected"));
         }
 
-        // Check 3: Load and validate the server activation token or 7-day trial.
-        if get_valid_entitlement_claims().is_some() || has_active_trial() {
+        // Check 3: Load and validate local license.
+        if has_valid_local_license() {
             LICENSE_VALID.store(true, Ordering::SeqCst);
             VALIDATION_TOKEN.store(compute_valid_token(), Ordering::SeqCst);
             ValidationResult::Valid
@@ -167,7 +133,7 @@ pub fn is_licensed() -> bool {
 
     #[cfg(not(debug_assertions))]
     {
-        if get_valid_entitlement_claims().is_some() || has_active_trial() {
+        if has_valid_local_license() {
             LICENSE_VALID.store(true, Ordering::SeqCst);
             VALIDATION_TOKEN.store(compute_valid_token(), Ordering::SeqCst);
         } else {
@@ -201,15 +167,6 @@ pub fn has_feature_access(feature: LicensedFeature) -> bool {
     ensure_feature_access(feature).is_ok()
 }
 
-#[inline]
-pub fn has_valid_entitlement_for(feature_id: &str) -> bool {
-    if cfg!(debug_assertions) || !is_enforcement_enabled() {
-        return true;
-    }
-
-    !feature_id.trim().is_empty() && is_licensed()
-}
-
 /// Require license for critical operations (returns derived key for obfuscation)
 #[inline]
 pub fn require_license() -> Option<u64> {
@@ -230,23 +187,28 @@ pub fn require_license() -> Option<u64> {
     }
 }
 
-/// Activate license with key
+/// Activate license with locally signed key bound to this machine.
 pub fn activate(license_key: &str) -> ValidationResult {
     if !is_enforcement_enabled() {
         return ValidationResult::Valid;
     }
 
     if license_key.trim().is_empty() {
-        return ValidationResult::Invalid("Server activation token is required".to_string());
+        return ValidationResult::Invalid("License key is required".to_string());
     }
 
-    match store_entitlement_token(license_key) {
-        Ok(_) => {
+    let validator = LicenseValidator::new();
+    match validator.validate_str(license_key) {
+        ValidationResult::Valid => {
+            if let Err(error) = LicenseStorage::save(license_key) {
+                return ValidationResult::Invalid(error);
+            }
+
             LICENSE_VALID.store(true, Ordering::SeqCst);
             VALIDATION_TOKEN.store(compute_valid_token(), Ordering::SeqCst);
             ValidationResult::Valid
         }
-        Err(error) => ValidationResult::Invalid(error),
+        other => other,
     }
 }
 
@@ -271,6 +233,16 @@ pub fn needs_activation() -> bool {
 
     #[cfg(not(debug_assertions))]
     !is_licensed()
+}
+
+/// Whether a valid local license is present for the current machine.
+pub fn has_valid_local_license() -> bool {
+    let Some(license) = LicenseStorage::load() else {
+        return false;
+    };
+
+    let validator = LicenseValidator::new();
+    matches!(validator.validate(&license), ValidationResult::Valid)
 }
 
 /// Compute validation token based on machine characteristics

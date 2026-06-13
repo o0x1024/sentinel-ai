@@ -282,6 +282,7 @@
               </div>
             </div>
           </div>
+          <RetrievedMemoryPanel :context-usage="contextUsage" />
           <!-- Message flow -->
           <div class="relative flex-1 min-h-0">
             <MessageFlow
@@ -313,6 +314,7 @@
             ref="inputAreaRef"
             v-model:input-message="inputValue"
             :conversation-id="conversationId"
+            :active="isViewActive"
             :is-loading="isExecuting"
             :allow-takeover="true"
             :show-debug-info="false"
@@ -529,6 +531,7 @@ import { useBrowserShell } from '@/composables/useBrowserShell'
 import { useTerminal } from '@/composables/useTerminal'
 import { useAgentSessionManager } from '@/composables/useAgentSessionManager'
 import MessageFlow from './MessageFlow.vue'
+import RetrievedMemoryPanel from './RetrievedMemoryPanel.vue'
 import SubagentPanel from './SubagentPanel.vue'
 import InputAreaComponent from '@/components/InputAreaComponent.vue'
 import ConversationList from './ConversationList.vue'

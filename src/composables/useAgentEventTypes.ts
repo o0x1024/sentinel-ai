@@ -301,6 +301,8 @@ export interface ContextUsageInfo {
   summaryGlobalTokens: number
   summarySegmentTokens: number
   summarySegmentCount: number
+  retrievalIds?: string[]
+  retrievalTokens?: number
   sentinelMode?: boolean
   sentinelIntentId?: string | null
   sentinelIntentConfidence?: number | null

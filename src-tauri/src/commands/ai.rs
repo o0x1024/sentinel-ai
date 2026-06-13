@@ -32,7 +32,7 @@ use uuid::Uuid;
 
 /// Hard safety ceiling for output storage threshold.
 /// UI recommends 8K-32K, but we still allow up to 50K for compatibility.
-pub(crate) const MAX_SAFE_OUTPUT_STORAGE_THRESHOLD: usize = 50_000;
+pub(crate) const MAX_SAFE_OUTPUT_STORAGE_THRESHOLD: usize = 100_000;
 pub(crate) const USER_FORCED_RULES_CONFIG_CATEGORY: &str = "agent";
 pub(crate) const USER_FORCED_RULES_CONFIG_KEY: &str = "user_forced_rules";
 

@@ -1,26 +1,26 @@
 <template>
   <div class="space-y-4">
     <div class="flex flex-wrap items-center justify-between gap-3">
-      <h2 class="text-lg font-semibold">透明加解密规则管理</h2>
+      <h2 class="text-lg font-semibold">{{ $t('trafficAnalysis.codec.rulesPanel.title') }}</h2>
       <label class="flex items-center gap-2 text-sm">
-        <span class="text-base-content/70">全局开关:</span>
+        <span class="text-base-content/70">{{ $t('trafficAnalysis.codec.rulesPanel.globalToggle') }}:</span>
         <input
           :checked="codec.codecViewEnabled.value"
           type="checkbox"
           class="toggle toggle-sm toggle-primary"
           @change="toggleGlobalCodec"
         />
-        <span>{{ codec.codecViewEnabled.value ? '已启用' : '已禁用' }}</span>
+        <span>{{ codec.codecViewEnabled.value ? $t('trafficAnalysis.codec.rulesPanel.enabled') : $t('trafficAnalysis.codec.rulesPanel.disabled') }}</span>
       </label>
     </div>
 
     <div class="flex flex-wrap gap-2">
       <button class="btn btn-sm btn-primary" type="button" @click="openCreateDialog">
         <i class="fas fa-plus mr-1"></i>
-        新建规则
+        {{ $t('trafficAnalysis.codec.rulesPanel.newRule') }}
       </button>
       <button class="btn btn-sm btn-outline" type="button" @click="openImportDialog">
-        导入规则
+        {{ $t('trafficAnalysis.codec.rulesPanel.importRules') }}
       </button>
       <button
         class="btn btn-sm btn-outline"
@@ -28,7 +28,7 @@
         :disabled="exporting || sortedRules.length === 0"
         @click="exportSelected"
       >
-        {{ exporting ? '导出中...' : '导出选中' }}
+        {{ exporting ? $t('trafficAnalysis.codec.rulesPanel.exporting') : $t('trafficAnalysis.codec.rulesPanel.exportSelected') }}
       </button>
     </div>
 
@@ -40,7 +40,7 @@
       v-else-if="sortedRules.length === 0"
       class="rounded-lg border border-dashed border-base-300 py-12 text-center text-base-content/60"
     >
-      暂无规则，点击"新建规则"创建第一条解密规则
+      {{ $t('trafficAnalysis.codec.rulesPanel.emptyState') }}
     </div>
 
     <div v-else class="overflow-hidden rounded-lg border border-base-300">
@@ -67,7 +67,7 @@
           type="button"
           class="btn btn-ghost btn-xs cursor-grab px-2 active:cursor-grabbing"
           tabindex="-1"
-          aria-label="拖拽排序"
+          :aria-label="$t('trafficAnalysis.codec.pipelineEditor.dragSort')"
         >
           <i class="fas fa-grip-lines text-base-content/40"></i>
         </button>
@@ -94,7 +94,7 @@
 
         <div class="flex items-center gap-2">
           <button class="btn btn-ghost btn-xs" type="button" @click="openEditDialog(rule)">
-            编辑
+            {{ $t('trafficAnalysis.codec.rulesPanel.edit') }}
           </button>
           <button
             class="btn btn-ghost btn-xs text-error"
@@ -102,7 +102,7 @@
             :disabled="deletingRuleId === rule.id"
             @click="confirmDelete(rule)"
           >
-            删除
+            {{ $t('trafficAnalysis.codec.rulesPanel.delete') }}
           </button>
         </div>
       </div>
@@ -124,6 +124,7 @@
 
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { dialog } from '@/composables/useDialog'
 import { toast } from '@/composables/useToast'
 import TrafficCodecImportExportDialog from './TrafficCodecImportExportDialog.vue'
@@ -133,6 +134,7 @@ import { useTrafficCodecRuleStore } from './trafficCodecRuleStore'
 import { useTrafficCodec } from './useTrafficCodec'
 import { BUILTIN_CODECS, type TrafficCodecRule } from './trafficCodecTypes'
 
+const { t } = useI18n()
 const store = useTrafficCodecRuleStore()
 const codec = useTrafficCodec()
 
@@ -166,7 +168,7 @@ function formatMatchSummary(rule: TrafficCodecRule): string {
 
 function formatCodecSummary(rule: TrafficCodecRule): string {
   const enabledSteps = rule.pipeline.steps.filter(step => step.enabled)
-  if (enabledSteps.length === 0) return '无步骤'
+  if (enabledSteps.length === 0) return t('trafficAnalysis.codec.rulesPanel.noSteps')
   return enabledSteps
     .map(step => codecLabelById.get(step.codec) ?? step.codec.toUpperCase())
     .join(' → ')
@@ -229,7 +231,7 @@ async function toggleRuleEnabled(rule: TrafficCodecRule) {
 }
 
 async function confirmDelete(rule: TrafficCodecRule) {
-  const confirmed = await dialog.confirm(`确认删除规则「${rule.name}」吗？`)
+  const confirmed = await dialog.confirm(t('trafficAnalysis.codec.rulesPanel.deleteConfirm', { name: rule.name }))
   if (!confirmed) return
 
   deletingRuleId.value = rule.id
@@ -256,7 +258,7 @@ async function exportSelected() {
     const timestamp = new Date().toISOString().slice(0, 10)
     downloadAsFile(json, `codec-rules-${timestamp}.json`)
   } catch (error) {
-    toast.error(error instanceof Error ? error.message : '导出失败')
+    toast.error(error instanceof Error ? error.message : t('trafficAnalysis.codec.rulesPanel.exportFailed'))
   } finally {
     exporting.value = false
   }

@@ -718,6 +718,44 @@ pub fn log_request_with_image(
     );
 }
 
+/// 记录 LLM 上下文消息（orchestrator context / history）
+pub fn log_context_messages(
+    session_id: &str,
+    conversation_id: Option<&str>,
+    provider: &str,
+    model: &str,
+    messages: &[(&str, &str)],
+) {
+    if messages.is_empty() {
+        return;
+    }
+    let mut body = String::new();
+    let mut total_chars = 0;
+    for (i, (role, content)) in messages.iter().enumerate() {
+        let header = format!("\n--- Message {} [{}] ---\n", i + 1, role);
+        let content_preview = truncate_with_marker(content, 3000);
+        let entry = format!("{}{}\n", header, content_preview);
+        total_chars += entry.len();
+        if total_chars > LLM_REQUEST_LOG_MAX_CHARS {
+            body.push_str(&format!(
+                "\n...[{} more messages truncated]",
+                messages.len() - i
+            ));
+            break;
+        }
+        body.push_str(&entry);
+    }
+
+    write_llm_log(
+        session_id,
+        conversation_id,
+        provider,
+        model,
+        &format!("CONTEXT MESSAGES ({} total)", messages.len()),
+        &body,
+    );
+}
+
 /// 记录 LLM 响应
 pub fn log_response(
     session_id: &str,

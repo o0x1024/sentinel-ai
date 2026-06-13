@@ -27,9 +27,12 @@ pub fn execute_builtin_codec(
         "gzip" => gzip_codec(input, direction),
         "deflate" => deflate_codec(input, direction),
         "xor" => xor_codec(input, direction, config),
-        "sm4" | "des" | "3des" | "aes-gcm" | "rsa-pkcs1v15" | "rsa-oaep" => {
-            Err("not yet implemented".to_string())
-        }
+        "sm4" => sm4_codec(input, direction, config),
+        "des" => des_codec(input, direction, config),
+        "3des" => tdes_codec(input, direction, config),
+        "aes-gcm" => aes_gcm_codec(input, direction, config),
+        "rsa-pkcs1v15" => rsa_pkcs1_codec(input, direction, config),
+        "rsa-oaep" => rsa_oaep_codec(input, direction, config),
         other => Err(format!("unknown codec: {other}")),
     }
 }
@@ -320,6 +323,234 @@ fn xor_codec(
         .collect())
 }
 
+fn sm4_codec(
+    input: &[u8],
+    direction: CodecDirection,
+    config: &HashMap<String, String>,
+) -> Result<Vec<u8>, String> {
+    use cbc::{Decryptor, Encryptor};
+    use cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+    use sm4::Sm4;
+
+    let key = parse_key_bytes(config, "key")?;
+    if key.len() != 16 {
+        return Err(format!("SM4 key must be 16 bytes, got {}", key.len()));
+    }
+    let iv = parse_key_bytes(config, "iv")?;
+    if iv.len() != 16 {
+        return Err(format!("SM4 IV must be 16 bytes, got {}", iv.len()));
+    }
+
+    type Sm4CbcEnc = Encryptor<Sm4>;
+    type Sm4CbcDec = Decryptor<Sm4>;
+
+    match direction {
+        CodecDirection::Encode => Ok(Sm4CbcEnc::new(key.as_slice().into(), iv.as_slice().into())
+            .encrypt_padded_vec_mut::<Pkcs7>(input)),
+        CodecDirection::Decode => Sm4CbcDec::new(key.as_slice().into(), iv.as_slice().into())
+            .decrypt_padded_vec_mut::<Pkcs7>(input)
+            .map_err(|e| format!("SM4 decrypt failed: {e}")),
+    }
+}
+
+fn des_codec(
+    input: &[u8],
+    direction: CodecDirection,
+    config: &HashMap<String, String>,
+) -> Result<Vec<u8>, String> {
+    use cbc::{Decryptor, Encryptor};
+    use cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+    use des::Des;
+
+    let key = parse_key_bytes(config, "key")?;
+    if key.len() != 8 {
+        return Err(format!("DES key must be 8 bytes, got {}", key.len()));
+    }
+    let iv = parse_key_bytes(config, "iv")?;
+    if iv.len() != 8 {
+        return Err(format!("DES IV must be 8 bytes, got {}", iv.len()));
+    }
+
+    type DesCbcEnc = Encryptor<Des>;
+    type DesCbcDec = Decryptor<Des>;
+
+    match direction {
+        CodecDirection::Encode => Ok(DesCbcEnc::new(key.as_slice().into(), iv.as_slice().into())
+            .encrypt_padded_vec_mut::<Pkcs7>(input)),
+        CodecDirection::Decode => DesCbcDec::new(key.as_slice().into(), iv.as_slice().into())
+            .decrypt_padded_vec_mut::<Pkcs7>(input)
+            .map_err(|e| format!("DES decrypt failed: {e}")),
+    }
+}
+
+fn tdes_codec(
+    input: &[u8],
+    direction: CodecDirection,
+    config: &HashMap<String, String>,
+) -> Result<Vec<u8>, String> {
+    use cbc::{Decryptor, Encryptor};
+    use cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+    use des::TdesEde3;
+
+    let key = parse_key_bytes(config, "key")?;
+    if key.len() != 24 {
+        return Err(format!("3DES key must be 24 bytes, got {}", key.len()));
+    }
+    let iv = parse_key_bytes(config, "iv")?;
+    if iv.len() != 8 {
+        return Err(format!("3DES IV must be 8 bytes, got {}", iv.len()));
+    }
+
+    type TdesCbcEnc = Encryptor<TdesEde3>;
+    type TdesCbcDec = Decryptor<TdesEde3>;
+
+    match direction {
+        CodecDirection::Encode => Ok(TdesCbcEnc::new(key.as_slice().into(), iv.as_slice().into())
+            .encrypt_padded_vec_mut::<Pkcs7>(input)),
+        CodecDirection::Decode => TdesCbcDec::new(key.as_slice().into(), iv.as_slice().into())
+            .decrypt_padded_vec_mut::<Pkcs7>(input)
+            .map_err(|e| format!("3DES decrypt failed: {e}")),
+    }
+}
+
+fn aes_gcm_codec(
+    input: &[u8],
+    direction: CodecDirection,
+    config: &HashMap<String, String>,
+) -> Result<Vec<u8>, String> {
+    use aes_gcm::{
+        aead::{Aead, KeyInit, Payload},
+        Aes128Gcm, Aes256Gcm,
+    };
+
+    let key = parse_key_bytes(config, "key")?;
+    let nonce = parse_key_bytes(config, "iv").or_else(|_| parse_key_bytes(config, "nonce"))?;
+    if nonce.len() != 12 {
+        return Err(format!("AES-GCM nonce must be 12 bytes, got {}", nonce.len()));
+    }
+
+    let aad = config
+        .get("aad")
+        .map(|value| value.as_bytes().to_vec())
+        .unwrap_or_default();
+    let payload = Payload {
+        msg: input,
+        aad: &aad,
+    };
+
+    match (direction, key.len()) {
+        (CodecDirection::Encode, 16) => {
+            let cipher = Aes128Gcm::new_from_slice(&key)
+                .map_err(|e| format!("AES-GCM init failed: {e}"))?;
+            cipher
+                .encrypt(nonce.as_slice().into(), payload)
+                .map_err(|e| format!("AES-GCM encrypt failed: {e}"))
+        }
+        (CodecDirection::Decode, 16) => {
+            let cipher = Aes128Gcm::new_from_slice(&key)
+                .map_err(|e| format!("AES-GCM init failed: {e}"))?;
+            cipher
+                .decrypt(nonce.as_slice().into(), payload)
+                .map_err(|e| format!("AES-GCM decrypt failed: {e}"))
+        }
+        (CodecDirection::Encode, 32) => {
+            let cipher = Aes256Gcm::new_from_slice(&key)
+                .map_err(|e| format!("AES-GCM init failed: {e}"))?;
+            cipher
+                .encrypt(nonce.as_slice().into(), payload)
+                .map_err(|e| format!("AES-GCM encrypt failed: {e}"))
+        }
+        (CodecDirection::Decode, 32) => {
+            let cipher = Aes256Gcm::new_from_slice(&key)
+                .map_err(|e| format!("AES-GCM init failed: {e}"))?;
+            cipher
+                .decrypt(nonce.as_slice().into(), payload)
+                .map_err(|e| format!("AES-GCM decrypt failed: {e}"))
+        }
+        (_, len) => Err(format!(
+            "AES-GCM key must be 16 or 32 bytes, got {len}"
+        )),
+    }
+}
+
+fn parse_rsa_key_pem(config: &HashMap<String, String>, key_name: &str) -> Result<String, String> {
+    config
+        .get(key_name)
+        .cloned()
+        .filter(|value| !value.trim().is_empty())
+        .ok_or_else(|| format!("missing RSA {key_name}"))
+}
+
+fn rsa_pkcs1_codec(
+    input: &[u8],
+    direction: CodecDirection,
+    config: &HashMap<String, String>,
+) -> Result<Vec<u8>, String> {
+    use rsa::pkcs1::DecodeRsaPrivateKey;
+    use rsa::pkcs1v15::{DecryptingKey, EncryptingKey};
+    use rsa::pkcs8::DecodePublicKey;
+    use rsa::traits::{Decryptor, RandomizedEncryptor};
+    use rsa::{RsaPrivateKey, RsaPublicKey};
+
+    match direction {
+        CodecDirection::Encode => {
+            let pem = parse_rsa_key_pem(config, "public_key")?;
+            let public_key = RsaPublicKey::from_public_key_pem(&pem)
+                .map_err(|e| format!("invalid RSA public key: {e}"))?;
+            let encrypting_key = EncryptingKey::new(public_key);
+            encrypting_key
+                .encrypt_with_rng(&mut rand::thread_rng(), input)
+                .map_err(|e| format!("RSA PKCS1v15 encrypt failed: {e}"))
+        }
+        CodecDirection::Decode => {
+            let pem = parse_rsa_key_pem(config, "private_key")?;
+            let private_key = RsaPrivateKey::from_pkcs1_pem(&pem)
+                .map_err(|e| format!("invalid RSA private key: {e}"))?;
+            let decrypting_key = DecryptingKey::new(private_key);
+            decrypting_key
+                .decrypt(input)
+                .map_err(|e| format!("RSA PKCS1v15 decrypt failed: {e}"))
+        }
+    }
+}
+
+fn rsa_oaep_codec(
+    input: &[u8],
+    direction: CodecDirection,
+    config: &HashMap<String, String>,
+) -> Result<Vec<u8>, String> {
+    use rsa::oaep::Oaep;
+    use rsa::pkcs1::DecodeRsaPrivateKey;
+    use rsa::pkcs8::{DecodePrivateKey, DecodePublicKey};
+    use rsa::{RsaPrivateKey, RsaPublicKey};
+    use sha2::Sha256;
+
+    let hash_name = config.get("hash").map(String::as_str).unwrap_or("sha256");
+    if hash_name != "sha256" {
+        return Err(format!("unsupported RSA-OAEP hash: {hash_name}"));
+    }
+
+    match direction {
+        CodecDirection::Encode => {
+            let pem = parse_rsa_key_pem(config, "public_key")?;
+            let public_key = RsaPublicKey::from_public_key_pem(&pem)
+                .map_err(|e| format!("invalid RSA public key: {e}"))?;
+            public_key
+                .encrypt(&mut rand::thread_rng(), Oaep::new::<Sha256>(), input)
+                .map_err(|e| format!("RSA-OAEP encrypt failed: {e}"))
+        }
+        CodecDirection::Decode => {
+            let pem = parse_rsa_key_pem(config, "private_key")?;
+            let private_key = RsaPrivateKey::from_pkcs8_pem(&pem)
+                .or_else(|_| RsaPrivateKey::from_pkcs1_pem(&pem))
+                .map_err(|e| format!("invalid RSA private key: {e}"))?;
+            private_key
+                .decrypt(Oaep::new::<Sha256>(), input)
+                .map_err(|e| format!("RSA-OAEP decrypt failed: {e}"))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -350,9 +581,10 @@ mod tests {
     }
 
     #[test]
-    fn unimplemented_codecs_return_error() {
+    fn rsa_requires_key_config() {
         let config = HashMap::new();
         let result = execute_builtin_codec("rsa-oaep", b"data", CodecDirection::Encode, &config);
-        assert_eq!(result, Err("not yet implemented".to_string()));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("missing RSA"));
     }
 }

@@ -1,4 +1,5 @@
 pub mod diagnostics;
+pub mod management;
 
 use anyhow::{anyhow, Result};
 use std::collections::HashMap;
@@ -6,13 +7,18 @@ use std::sync::Arc;
 use tauri::{AppHandle, Manager};
 
 use crate::agents::context_engineering::{
-    keyword_score_value, retrieve_memory_items_hybrid, ContextRunState, MemoryQuery,
-    RetrievedMemoryItem,
+    retrieve_memory_unified, ContextRunState, MemoryQuery, RetrievedMemoryItem,
 };
 use crate::commands::rag_commands::{ensure_memory_collection_exists, get_or_init_rag_service};
 use crate::skills::candidates::{upsert_skill_candidate_from_memory, SkillCandidateMemoryInput};
 pub use diagnostics::{
     build_memory_retrieval_trace, DurableMemoryDiagnosticsItem, MemoryRetrievalTrace,
+};
+pub use management::{
+    delete_durable_memory, filter_hits_for_auto_inject, memory_auto_inject_enabled,
+    preview_memory_retrieval, set_durable_memory_auto_inject, update_durable_memory,
+    DurableMemoryAutoInjectResult, DurableMemoryDeleteResult, DurableMemoryUpdateResult,
+    NO_AUTO_INJECT_TAG,
 };
 use sentinel_db::core::models::database::{DurableMemoryProjectionState, DurableMemoryRecord};
 use sentinel_tools::buildin_tools::memory::{
@@ -22,6 +28,7 @@ use sentinel_tools::buildin_tools::memory::{
 
 const MEMORY_TOOL_EXECUTION_ID: &str = "memory_tool";
 
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct MemoryRetrieveOutcome {
     pub hits: Vec<RetrievedMemoryItem>,
     pub trace: MemoryRetrievalTrace,
@@ -95,6 +102,7 @@ pub async fn store_memory(
     let now_ms = chrono::Utc::now().timestamp_millis();
     let memory_id =
         sentinel_rag::build_memory_document_id(inferred_kind.as_str(), content.as_str());
+    metadata.insert("memory_id".to_string(), memory_id.clone());
 
     db.upsert_durable_memory_record_internal(&DurableMemoryRecord {
         id: memory_id.clone(),
@@ -240,66 +248,19 @@ pub async fn retrieve_memory_outcome(
         query,
         top_k: top_k.max(1),
         include_reflection: false,
+        respect_auto_inject_suppression: false,
     };
 
-    let hits = retrieve_memory_items_hybrid(app_handle, &mut state, &request).await;
-    if !hits.is_empty() {
-        let trace = build_memory_retrieval_trace(
-            &request.query,
-            request.top_k,
-            &hits,
-            false,
-            request.include_reflection,
-        );
-        return Ok(MemoryRetrieveOutcome { hits, trace });
-    }
-
-    let db_service = app_handle
-        .try_state::<Arc<sentinel_db::DatabaseService>>()
-        .ok_or_else(|| anyhow!("DatabaseService not available"))?;
-    let db = db_service.inner().clone();
-    let recent = db
-        .list_recent_durable_memory_records_internal((top_k.max(1) * 10) as i64)
-        .await?;
-
-    let mut scored = recent
-        .into_iter()
-        .filter_map(|record| {
-            let score = keyword_score_value(&request.query, &record.text);
-            if score <= 0.0 {
-                return None;
-            }
-            Some(RetrievedMemoryItem {
-                id: record.id,
-                text: record.text,
-                kind: record.kind,
-                scope: record.scope,
-                stability: record.stability,
-                source: format!("{}:canonical", record.source),
-                confidence: record.confidence,
-                importance: record.importance.clamp(1, 5) as u8,
-                created_at_ms: record.created_at_ms,
-                score,
-            })
-        })
-        .collect::<Vec<_>>();
-
-    scored.sort_by(|a, b| {
-        b.score
-            .partial_cmp(&a.score)
-            .unwrap_or(std::cmp::Ordering::Equal)
-            .then_with(|| b.created_at_ms.cmp(&a.created_at_ms))
-    });
-    scored.truncate(top_k.max(1));
+    let retrieval = retrieve_memory_unified(app_handle, &mut state, &request).await;
     let trace = build_memory_retrieval_trace(
-        &request.query,
+        &retrieval.query_used,
         request.top_k,
-        &scored,
-        true,
+        &retrieval.hits,
+        retrieval.used_canonical_fallback,
         request.include_reflection,
     );
     Ok(MemoryRetrieveOutcome {
-        hits: scored,
+        hits: retrieval.hits,
         trace,
     })
 }

@@ -25,7 +25,30 @@ use crate::agents::executor::file_tool_state::{
     ensure_file_snapshot_is_editable, record_file_read_snapshot, record_file_revision_snapshot,
 };
 use crate::agents::executor::http_request_override::build_http_override_def;
-use crate::agents::executor::model_context_tool::wrap_dynamic_tool_for_model_context;
+use crate::agents::executor::model_context_tool::{
+    wrap_dynamic_tool_for_model_context, SkillInjectionSink,
+};
+use crate::agents::executor::tool_result_limits::{
+    TOOL_RESULT_FIELD_MAX_CHARS, TOOL_RESULT_MAX_CHARS, TOOL_RESULT_PLAIN_PREVIEW_CHARS,
+    TOOL_RESULT_PREVIEW_HEAD_LINES,
+};
+
+/// Clears the skills parent execution id when the agent run ends.
+pub(super) struct SkillsParentExecutionScope;
+
+impl SkillsParentExecutionScope {
+    pub(super) fn new(execution_id: String) -> Self {
+        sentinel_tools::buildin_tools::skills::set_skills_parent_execution_id(Some(execution_id));
+        Self
+    }
+}
+
+impl Drop for SkillsParentExecutionScope {
+    fn drop(&mut self) {
+        sentinel_tools::buildin_tools::skills::set_skills_parent_execution_id(None);
+    }
+}
+
 use crate::agents::executor::question_override::build_ask_user_question_override_def;
 use crate::agents::executor::shell_override::build_shell_override_def;
 use crate::agents::executor::tool_search_override::build_tool_search_override_def;
@@ -37,12 +60,20 @@ use sentinel_memory::{get_global_memory, ExecutionRecord, ToolCallSummary};
 
 type PendingToolCalls = std::collections::HashMap<String, (String, String, i64, u32)>;
 
-const RETRY_TOOL_RESULT_MAX_CHARS: usize = 12_000;
-const RETRY_TOOL_RESULT_FIELD_MAX_CHARS: usize = 4_000;
-const RETRY_TOOL_RESULT_PLAIN_PREVIEW_CHARS: usize = 8_000;
-const RETRY_TOOL_RESULT_HEAD_LINES: usize = 80;
+pub(super) async fn load_enabled_skill_entries(
+    db: &DatabaseService,
+) -> Vec<crate::agents::skills_injection::SkillEntry> {
+    let skills_root = db.get_skills_root_dir();
+    let mut enabled_entries = Vec::new();
+    for entry in crate::agents::skills_injection::load_skill_entries_from_root(&skills_root) {
+        if is_skill_enabled_in_db(db, &entry.id).await {
+            enabled_entries.push(entry);
+        }
+    }
+    enabled_entries
+}
 
-async fn is_skills_enabled_in_db(db: &DatabaseService) -> bool {
+pub(super) async fn is_skills_enabled_in_db(db: &DatabaseService) -> bool {
     match db.get_config("agent", "skills_enabled").await {
         Ok(Some(val)) => {
             let v = val.trim().to_lowercase();
@@ -80,7 +111,7 @@ pub(super) async fn register_skills_tool_guard(
         let db = db.clone();
         Box::pin(async move {
             use rig::tool::Tool;
-            use sentinel_tools::buildin_tools::skills::{SkillsAction, SkillsTool, SkillsToolArgs};
+            use sentinel_tools::buildin_tools::skills::{SkillsTool, SkillsToolArgs};
 
             let tool_args: SkillsToolArgs =
                 serde_json::from_value(args).map_err(|e| format!("Invalid arguments: {}", e))?;
@@ -89,36 +120,17 @@ pub(super) async fn register_skills_tool_guard(
                 return Err("Skills tool is disabled".to_string());
             }
 
-            let skill_id = tool_args.skill_id.as_deref();
-            let requires_skill = matches!(
-                tool_args.action,
-                SkillsAction::Load | SkillsAction::ReadSkillFile
-            );
-            if requires_skill {
-                if let Some(id) = skill_id {
-                    if !is_skill_enabled_in_db(&db, id).await {
-                        return Err(format!("Skill '{}' is disabled", id));
-                    }
-                }
+            let skill_id = SkillsTool::resolve_skill_id(tool_args.skill.trim())
+                .map_err(|e| format!("Skill lookup failed: {}", e))?;
+            if !is_skill_enabled_in_db(&db, &skill_id).await {
+                return Err(format!("Skill '{}' is disabled", skill_id));
             }
 
             let tool = SkillsTool;
-            let mut result = tool
+            let result = tool
                 .call(tool_args)
                 .await
                 .map_err(|e| format!("Skills operation failed: {}", e))?;
-
-            if matches!(result.action.as_str(), "list") {
-                if let Some(skills) = result.skills.take() {
-                    let mut filtered = Vec::new();
-                    for skill in skills {
-                        if is_skill_enabled_in_db(&db, &skill.id).await {
-                            filtered.push(skill);
-                        }
-                    }
-                    result.skills = Some(filtered);
-                }
-            }
 
             serde_json::to_value(result).map_err(|e| format!("Failed to serialize result: {}", e))
         })
@@ -258,6 +270,10 @@ pub(super) fn apply_tool_config_scope_policy(
 }
 
 pub(super) fn infer_tool_result_success(raw: &str) -> bool {
+    if let Some(success) = sentinel_tools::infer_skills_tool_success_from_result(raw) {
+        return success;
+    }
+
     fn is_structured_http_response(map: &serde_json::Map<String, serde_json::Value>) -> bool {
         map.get("status_code").and_then(|v| v.as_u64()).is_some()
             && map.get("headers").and_then(|v| v.as_object()).is_some()
@@ -969,7 +985,7 @@ pub(super) fn build_retry_history(
 }
 
 pub(super) fn compact_tool_result_for_context(tool_name: &str, result: &str) -> String {
-    if result.chars().count() <= RETRY_TOOL_RESULT_MAX_CHARS {
+    if result.chars().count() <= TOOL_RESULT_MAX_CHARS {
         return result.to_string();
     }
 
@@ -987,7 +1003,7 @@ pub(super) fn compact_tool_result_for_context(tool_name: &str, result: &str) -> 
             );
         }
         if let Ok(rendered) = serde_json::to_string(&value) {
-            if rendered.chars().count() <= RETRY_TOOL_RESULT_MAX_CHARS {
+            if rendered.chars().count() <= TOOL_RESULT_MAX_CHARS {
                 return rendered;
             }
             return compact_plain_tool_result(tool_name, &rendered, original_chars);
@@ -1010,9 +1026,9 @@ fn compact_json_value(value: &mut Value) {
             }
         }
         Value::String(text) => {
-            if text.chars().count() > RETRY_TOOL_RESULT_FIELD_MAX_CHARS {
+            if text.chars().count() > TOOL_RESULT_FIELD_MAX_CHARS {
                 let original_chars = text.chars().count();
-                *text = compact_text_preview(text, RETRY_TOOL_RESULT_FIELD_MAX_CHARS);
+                *text = compact_text_preview(text, TOOL_RESULT_FIELD_MAX_CHARS);
                 text.push_str(&format!(
                     "\n[context microcompact: original_chars={}]",
                     original_chars
@@ -1028,14 +1044,14 @@ fn compact_plain_tool_result(tool_name: &str, result: &str, original_chars: usiz
         "tool": tool_name,
         "context_microcompact": true,
         "original_chars": original_chars,
-        "preview": compact_text_preview(result, RETRY_TOOL_RESULT_PLAIN_PREVIEW_CHARS),
+        "preview": compact_text_preview(result, TOOL_RESULT_PLAIN_PREVIEW_CHARS),
     })
     .to_string()
 }
 
 fn compact_text_preview(text: &str, max_chars: usize) -> String {
     let mut preview = String::new();
-    for line in text.lines().take(RETRY_TOOL_RESULT_HEAD_LINES) {
+    for line in text.lines().take(TOOL_RESULT_PREVIEW_HEAD_LINES) {
         if !preview.is_empty() {
             preview.push('\n');
         }
@@ -1660,6 +1676,7 @@ pub(super) async fn patch_builtin_dynamic_tools(
     active_terminal_session_id: Option<&str>,
     host_working_directory: Option<&str>,
     referenced_traffic: &[serde_json::Value],
+    skill_injection_sink: Option<SkillInjectionSink>,
 ) -> Vec<DynamicTool> {
     if let Some(def) = build_traffic_response_read_tool(app_handle.clone(), referenced_traffic) {
         dynamic_tools.push(DynamicTool::new(def));
@@ -1783,7 +1800,9 @@ pub(super) async fn patch_builtin_dynamic_tools(
 
     dynamic_tools
         .into_iter()
-        .map(|tool| wrap_dynamic_tool_for_model_context(tool, execution_id))
+        .map(|tool| {
+            wrap_dynamic_tool_for_model_context(tool, execution_id, skill_injection_sink.clone())
+        })
         .collect()
 }
 

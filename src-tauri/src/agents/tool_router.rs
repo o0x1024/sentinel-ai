@@ -3,6 +3,7 @@
 //! 根据任务内容选择相关工具，避免将所有工具传给 LLM 造成 token 浪费。
 
 mod catalog;
+pub(crate) use catalog::score_skill_match;
 pub(crate) mod tool_server_catalog;
 mod types;
 
@@ -10,7 +11,6 @@ use anyhow::Result;
 use once_cell::sync::Lazy;
 #[allow(unused_imports)]
 use sentinel_db::Database;
-use serde_json;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -21,12 +21,13 @@ use sentinel_tools::buildin_tools::{
     MemoryManagerTool, MissionSchedulerTool, SkillsTool, ToolSearchTool,
 };
 pub use types::{
-    SelectedSkill, ToolCategory, ToolConfig, ToolCost, ToolExposure, ToolMetadata,
-    ToolSelectionPlan, ToolSelectionStrategy, ToolStatistics, ToolUsageRecord, ToolUsageStatistics,
+    SelectedSkill, ToolCategory, ToolConfig, ToolCost, ToolExposure,
+    ToolMetadata, ToolSelectionPlan, ToolSelectionStrategy, ToolStatistics, ToolUsageRecord,
+    ToolUsageStatistics,
     ToolUsageStats,
 };
 
-use self::catalog::{extract_mcp_tool_tags, extract_workflow_tags, score_skill_match};
+use self::catalog::{extract_mcp_tool_tags, extract_workflow_tags};
 use self::tool_server_catalog::build_builtin_tool_metadata;
 
 /// 全局工具使用记录
@@ -215,7 +216,7 @@ impl ToolRouter {
                 let injected_system_prompt = if tool_ids.iter().any(|id| id == SkillsTool::NAME)
                     && self.is_skills_enabled().await
                 {
-                    self.build_skills_prompt_injection(Some(task)).await
+                    self.build_skills_prompt_injection(Some(task), Some(200_000)).await
                 } else {
                     None
                 };
@@ -229,103 +230,41 @@ impl ToolRouter {
         }
     }
 
-    async fn build_skills_prompt_injection(&self, task: Option<&str>) -> Option<String> {
-        const MAX_SKILLS_INJECTION: usize = 8;
-        const MAX_DESC_CHARS: usize = 220;
-
-        if let Some(db_service) = &self.db_service {
-            let root = db_service.get_skills_root_dir();
-            let mut summaries: Vec<(String, String)> = Vec::new();
-            if let Ok(entries) = std::fs::read_dir(&root) {
-                for entry in entries.flatten() {
-                    if !entry.file_type().map(|t| t.is_dir()).unwrap_or(false) {
-                        continue;
-                    }
-                    let skill_dir = entry.path();
-                    let skill_id = entry.file_name().to_string_lossy().to_string();
-                    if !self.is_skill_enabled(&skill_id).await {
-                        continue;
-                    }
-                    let skill_md = skill_dir.join("SKILL.md");
-                    if !skill_md.exists() {
-                        continue;
-                    }
-                    let content = match std::fs::read_to_string(&skill_md) {
-                        Ok(c) => c,
-                        Err(_) => continue,
-                    };
-                    let doc = match crate::skills::parse_skill_markdown(&content) {
-                        Ok(doc) => doc,
-                        Err(_) => continue,
-                    };
-                    if doc.frontmatter.description.trim().is_empty()
-                        && doc
-                            .frontmatter
-                            .when_to_use
-                            .as_ref()
-                            .map(|s| s.trim().is_empty())
-                            .unwrap_or(true)
-                    {
-                        continue;
-                    }
-                    let name = doc.frontmatter.name.trim().to_string();
-                    if name.is_empty() {
-                        continue;
-                    }
-                    let description = if let Some(when) = doc.frontmatter.when_to_use.as_ref() {
-                        if when.trim().is_empty() {
-                            doc.frontmatter.description.trim().to_string()
-                        } else {
-                            format!("{} - {}", doc.frontmatter.description.trim(), when.trim())
-                        }
-                    } else {
-                        doc.frontmatter.description.trim().to_string()
-                    };
-                    let description = if description.len() > MAX_DESC_CHARS {
-                        let mut trimmed =
-                            description.chars().take(MAX_DESC_CHARS).collect::<String>();
-                        trimmed.push_str("...");
-                        trimmed
-                    } else {
-                        description
-                    };
-                    summaries.push((name, description));
-                }
+    async fn build_skills_prompt_injection(
+        &self,
+        task: Option<&str>,
+        context_window_tokens: Option<usize>,
+    ) -> Option<String> {
+        let db_service = self.db_service.as_ref()?;
+        let skills_root = db_service.get_skills_root_dir();
+        let mut enabled_entries = Vec::new();
+        for entry in crate::agents::skills_injection::load_skill_entries_from_root(&skills_root) {
+            if self.is_skill_enabled(&entry.id).await {
+                enabled_entries.push(entry);
             }
-            let total_count = summaries.len();
-            let task_text = task.unwrap_or_default().to_lowercase();
-            summaries.sort_by(|(name_a, desc_a), (name_b, desc_b)| {
-                let score_a = score_skill_match(&task_text, name_a, desc_a);
-                let score_b = score_skill_match(&task_text, name_b, desc_b);
-                score_b
-                    .cmp(&score_a)
-                    .then_with(|| name_a.to_lowercase().cmp(&name_b.to_lowercase()))
-            });
-            if summaries.len() > MAX_SKILLS_INJECTION {
-                summaries.truncate(MAX_SKILLS_INJECTION);
-            }
-            let mut rendered = summaries
-                .into_iter()
-                .map(|(name, description)| format!("\"{}\": {}", name, description))
-                .collect::<Vec<_>>();
-            if total_count > rendered.len() {
-                rendered.push(format!(
-                    "... {} more skills omitted for brevity. Use `skills` tool action=list to enumerate all.",
-                    total_count - rendered.len()
-                ));
-            }
-            let skills_block = if rendered.is_empty() {
-                "No skills available.".to_string()
-            } else {
-                rendered.join("\n")
-            };
-            Some(format!(
-                "\n<available_skills>\n{}\n</available_skills>\n\nWhen a task requires specialized workflows, use the top-level `skills` tool. If <available_skills> already lists relevant skills, call `skills` with action=\"load\" directly instead of listing first. To read files inside a skill, call `skills` with action=\"read_skill_file\", skill_id, and path. For workspace source files, use the top-level `file_read` tool. There is no top-level `read_file` tool. Do not assume skill details without loading.",
-                skills_block
-            ))
-        } else {
-            Some("When a task requires specialized workflows, use the top-level `skills` tool. If <available_skills> is provided, call `skills` with action=\"load\" directly; otherwise call `skills` with action=\"list\". To read files inside a skill, call `skills` with action=\"read_skill_file\", skill_id, and path. For workspace source files, use the top-level `file_read` tool. There is no top-level `read_file` tool. Do not assume skill details without loading.".to_string())
         }
+        let total_count = enabled_entries.len();
+        crate::agents::skills_injection::build_skills_catalog_message(
+            enabled_entries,
+            task,
+            total_count,
+            context_window_tokens,
+        )
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn enabled_skill_entries(&self) -> Vec<crate::agents::skills_injection::SkillEntry> {
+        let Some(db_service) = &self.db_service else {
+            return Vec::new();
+        };
+        let skills_root = db_service.get_skills_root_dir();
+        let mut enabled_entries = Vec::new();
+        for entry in crate::agents::skills_injection::load_skill_entries_from_root(&skills_root) {
+            if self.is_skill_enabled(&entry.id).await {
+                enabled_entries.push(entry);
+            }
+        }
+        enabled_entries
     }
 
     async fn is_skills_enabled(&self) -> bool {
@@ -1073,297 +1012,6 @@ Return ONLY the tool names, one per line."#,
         }
     }
 
-    /// Skill-aware two-phase progressive disclosure.
-    /// Phase 1: Show skill summaries to LLM, let it pick one
-    /// Phase 2: Load full skill (content + tools), inject context
-    #[allow(dead_code)]
-    async fn plan_tools_skills(
-        &self,
-        task: &str,
-        config: &ToolConfig,
-        llm_config: Option<&sentinel_llm::LlmConfig>,
-        _allowed_groups: &[String],
-        _db_pool: Option<&sentinel_db::sqlx_compat::PgPool>,
-    ) -> Result<ToolSelectionPlan> {
-        use sentinel_db::Database;
-        use sentinel_llm::{LlmClient, LlmConfig};
-
-        // Need DB service for skill queries
-        let db = match &self.db_service {
-            Some(db) => db,
-            None => {
-                tracing::warn!("Skill-aware planning requires db_service, falling back to Keyword");
-                let tool_ids = self.select_by_keywords(task, config)?;
-                return Ok(ToolSelectionPlan {
-                    tool_ids,
-                    injected_system_prompt: None,
-                    injected_runtime_context: None,
-                    selected_skill: None,
-                });
-            }
-        };
-
-        // Phase 1: Load all skill summaries (Claude-style auto discovery)
-        let skills = db.list_skills_summary().await?;
-        let mut enabled_skills = Vec::new();
-        for skill in skills {
-            if self.is_skill_enabled(&skill.id).await {
-                enabled_skills.push(skill);
-            }
-        }
-
-        if enabled_skills.is_empty() {
-            tracing::warn!("No skills found, falling back to Keyword");
-            let tool_ids = self.select_by_keywords(task, config)?;
-            return Ok(ToolSelectionPlan {
-                tool_ids,
-                injected_system_prompt: None,
-                injected_runtime_context: None,
-                selected_skill: None,
-            });
-        }
-
-        // Build skill selection prompt
-        let skills_summary = enabled_skills
-            .iter()
-            .map(|s| format!("- {}: {}", s.name, s.description))
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        let system_prompt = format!(
-            r#"Available skills:
-{}
-
-Instructions:
-- If the task requires specialized tools or workflows, select the most relevant skills.
-- If multiple skills are needed, return a JSON array of skill names (max 3).
-- If the task is general chat (e.g., "who are you", "hello"), simple Q&A, or does not require any tools, choose "General".
-
-Return ONLY:
-- "General" (one word), or
-- A JSON array of skill names (example: ["code-audit","browser-automation"]), or
-- A single skill name."#,
-            skills_summary
-        );
-
-        let user_prompt = format!("Task: {}", task);
-
-        // Call LLM to select skill
-        let llm_cfg = llm_config
-            .cloned()
-            .unwrap_or_else(|| LlmConfig::new("openai", "gpt-3.5-turbo").with_timeout(30));
-        let client = LlmClient::new(llm_cfg);
-
-        let selected_skill_raw = match client.completion(Some(&system_prompt), &user_prompt).await {
-            Ok(response) => response.trim().to_string(),
-            Err(e) => {
-                tracing::warn!(
-                    "Skill selection LLM call failed: {}, falling back to Keyword",
-                    e
-                );
-                let tool_ids = self.select_by_keywords(task, config)?;
-                return Ok(ToolSelectionPlan {
-                    tool_ids,
-                    injected_system_prompt: None,
-                    injected_runtime_context: None,
-                    selected_skill: None,
-                });
-            }
-        };
-
-        // Check for General/None response
-        let selected_skill_raw = selected_skill_raw.trim().to_string();
-        if selected_skill_raw.eq_ignore_ascii_case("General")
-            || selected_skill_raw.eq_ignore_ascii_case("None")
-        {
-            tracing::info!("Tool Router: 'General' mode selected, skipping specialized tools.");
-            return Ok(ToolSelectionPlan {
-                tool_ids: vec![],
-                injected_system_prompt: None,
-                injected_runtime_context: None,
-                selected_skill: None,
-            });
-        }
-
-        let mut requested_names: Vec<String> = if selected_skill_raw.starts_with('[') {
-            match serde_json::from_str::<Vec<String>>(&selected_skill_raw) {
-                Ok(list) => list,
-                Err(_) => vec![selected_skill_raw.clone()],
-            }
-        } else {
-            vec![selected_skill_raw.clone()]
-        };
-
-        requested_names.retain(|s| !s.trim().is_empty());
-        if requested_names.is_empty() {
-            tracing::warn!("Empty skill selection, falling back to Keyword");
-            let tool_ids = self.select_by_keywords(task, config)?;
-            return Ok(ToolSelectionPlan {
-                tool_ids,
-                injected_system_prompt: None,
-                injected_runtime_context: None,
-                selected_skill: None,
-            });
-        }
-
-        if requested_names.len() > 3 {
-            requested_names.truncate(3);
-        }
-
-        let mut matched_skill_ids: Vec<String> = Vec::new();
-        for name in requested_names.iter() {
-            // Try exact match by name or id
-            if let Some(s) = enabled_skills
-                .iter()
-                .find(|s| s.name.eq_ignore_ascii_case(name) || s.id.eq_ignore_ascii_case(name))
-            {
-                matched_skill_ids.push(s.id.clone());
-                continue;
-            }
-            // Fuzzy match: contains skill name
-            if let Some(s) = enabled_skills.iter().find(|s| {
-                name.to_lowercase().contains(&s.name.to_lowercase())
-                    || name.to_lowercase().contains(&s.id.to_lowercase())
-            }) {
-                tracing::info!("Fuzzy matched skill: '{}'", s.name);
-                matched_skill_ids.push(s.id.clone());
-            }
-        }
-
-        matched_skill_ids.sort();
-        matched_skill_ids.dedup();
-
-        if matched_skill_ids.is_empty() {
-            tracing::warn!(
-                "Could not match LLM response '{}' to any skill, falling back to Keyword",
-                selected_skill_raw
-            );
-            let tool_ids = self.select_by_keywords(task, config)?;
-            return Ok(ToolSelectionPlan {
-                tool_ids,
-                injected_system_prompt: None,
-                injected_runtime_context: None,
-                selected_skill: None,
-            });
-        }
-
-        let mut full_skills = Vec::new();
-        for skill_id in matched_skill_ids.iter() {
-            if !self.is_skill_enabled(skill_id).await {
-                tracing::info!("Skill {} is disabled; skipping", skill_id);
-                continue;
-            }
-            match db.get_skill(skill_id).await? {
-                Some(s) => full_skills.push(s),
-                None => {
-                    tracing::warn!("Skill {} not found, skipping", skill_id);
-                }
-            }
-        }
-
-        if full_skills.is_empty() {
-            tracing::warn!("No skills loaded, falling back to Keyword");
-            let tool_ids = self.select_by_keywords(task, config)?;
-            return Ok(ToolSelectionPlan {
-                tool_ids,
-                injected_system_prompt: None,
-                injected_runtime_context: None,
-                selected_skill: None,
-            });
-        }
-
-        // Compute final tool_ids: preselected_tools + skill.allowed_tools - disabled_tools
-        let all_available = self.get_all_available_tools();
-        let available_ids: std::collections::HashSet<_> =
-            all_available.iter().map(|t| &t.id).collect();
-
-        let mut final_tools: Vec<String> = config.preselected_tools.clone();
-
-        // Add skill tools (filter out non-existent and disabled)
-        for skill in &full_skills {
-            for tool_id in &skill.allowed_tools {
-                if config.disabled_tools.contains(tool_id) {
-                    continue;
-                }
-                let normalized_id = tool_id.replace("::", "__");
-                let exists =
-                    available_ids.contains(tool_id) || available_ids.contains(&normalized_id);
-                if exists && !final_tools.contains(tool_id) && !final_tools.contains(&normalized_id)
-                {
-                    final_tools.push(if available_ids.contains(&normalized_id) {
-                        normalized_id
-                    } else {
-                        tool_id.clone()
-                    });
-                }
-            }
-        }
-
-        // Remove disabled from preselected_tools too
-        final_tools.retain(|t| !config.disabled_tools.contains(t));
-
-        // Respect max_tools
-        if final_tools.len() > config.max_tools {
-            final_tools.truncate(config.max_tools);
-        }
-
-        // Log if no tools available (this is valid - skill may not need tools)
-        if final_tools.is_empty() {
-            tracing::info!("Selected skills have no tools configured, proceeding without tools");
-        }
-
-        // Build selected skill runtime context (load SKILL.md body only, one block per skill)
-        let mut injected_blocks: Vec<String> = Vec::new();
-        if let Some(db_service) = &self.db_service {
-            let root = db_service.get_skills_root_dir();
-            for skill in &full_skills {
-                let skill_path = if !skill.source_path.is_empty() {
-                    root.join(&skill.source_path)
-                } else {
-                    root.join(&skill.id).join("SKILL.md")
-                };
-                match crate::skills::read_skill_markdown(&skill_path) {
-                    Ok(doc) => {
-                        let mut body = doc.body;
-                        if body.contains("$ARGUMENTS") {
-                            body = body.replace("$ARGUMENTS", task);
-                        }
-                        injected_blocks.push(format!(
-                            "\n\n[SkillContentBegin: {}]\n{}\n[SkillContentEnd]",
-                            skill.name, body
-                        ));
-                    }
-                    Err(e) => tracing::warn!("Failed to load SKILL.md for {}: {}", skill.id, e),
-                }
-            }
-        }
-
-        let injected = if injected_blocks.is_empty() {
-            None
-        } else {
-            Some(injected_blocks.join(""))
-        };
-
-        tracing::info!(
-            "Skills selection: skills={:?}, tools={:?}, content_blocks={}",
-            full_skills
-                .iter()
-                .map(|s| s.name.clone())
-                .collect::<Vec<_>>(),
-            final_tools,
-            injected_blocks.len()
-        );
-
-        Ok(ToolSelectionPlan {
-            tool_ids: final_tools,
-            injected_system_prompt: None,
-            injected_runtime_context: injected,
-            selected_skill: Some(SelectedSkill {
-                id: full_skills[0].id.clone(),
-                name: full_skills[0].name.clone(),
-            }),
-        })
-    }
 }
 
 fn has_memory_intent(task_lower: &str) -> bool {
@@ -1701,18 +1349,44 @@ mod tests {
             .contains("recommended_tool_ids"));
     }
 
-    #[tokio::test]
-    async fn skills_prompt_uses_skill_scoped_file_action() {
-        let router = ToolRouter::new_with_all_tools(None).await;
-        let prompt = router
-            .build_skills_prompt_injection(None)
-            .await
-            .expect("skills prompt should be generated");
+    #[test]
+    fn skills_how_to_use_instructs_invoke_only() {
+        use crate::agents::skills_injection::{
+            format_skill_body_message, SkillInjection, SKILL_CLOSE_TAG, SKILL_OPEN_TAG,
+            SKILLS_INSTRUCTIONS_OPEN_TAG,
+        };
 
-        assert!(prompt.contains("action=\"read_skill_file\""));
-        assert!(prompt.contains("top-level `file_read` tool"));
-        assert!(prompt.contains("There is no top-level `read_file` tool"));
-        assert!(!prompt.contains("action=read_file"));
-        assert!(!prompt.contains("action=\"read_file\""));
+        let catalog_body = crate::agents::skills_injection::render_skills_instructions_body(&[]);
+        assert!(
+            catalog_body.contains("skills"),
+            "Catalog how-to-use must mention the skills tool"
+        );
+        assert!(
+            !catalog_body.contains("read_file"),
+            "Catalog must not mention read_file"
+        );
+        assert!(
+            !catalog_body.contains("(file:"),
+            "Catalog must not expose file paths"
+        );
+        assert!(
+            !catalog_body.contains("action=`list`"),
+            "Catalog must not mention list action"
+        );
+
+        let injection = SkillInjection {
+            name: "penetration-tester".to_string(),
+            path: "skill://penetration-tester/SKILL.md".to_string(),
+            contents: "## Instructions\nDo the thing.".to_string(),
+        };
+        let msg = format_skill_body_message(&injection);
+        assert!(msg.starts_with(SKILL_OPEN_TAG));
+        assert!(msg.ends_with(SKILL_CLOSE_TAG));
+        assert!(msg.contains("<name>penetration-tester</name>"));
+        assert!(msg.contains("## Instructions"));
+
+        let wrapped = crate::agents::skills_injection::wrap_skills_instructions("body content");
+        assert!(wrapped.starts_with(SKILLS_INSTRUCTIONS_OPEN_TAG));
+        assert!(wrapped.contains("body content"));
     }
 }

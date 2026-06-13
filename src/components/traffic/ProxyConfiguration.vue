@@ -1335,6 +1335,7 @@
 <script setup lang="ts">
 import ProxyMonitorSettingsPanel from './ProxyMonitorSettingsPanel.vue'
 import TrafficCodecRulesPanel from './codec/TrafficCodecRulesPanel.vue'
+import { consumeTrafficCodecPendingSettingsTab } from './codec/trafficCodecSettingsSupport'
 import TrafficDisplaySettingsPanel from './TrafficDisplaySettingsPanel.vue'
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import { useI18n } from 'vue-i18n'
@@ -1462,6 +1463,11 @@ watch(activeSettingsTab, () => {
 })
 
 onMounted(() => {
+  const pendingTab = consumeTrafficCodecPendingSettingsTab()
+  if (pendingTab) {
+    activeSettingsTab.value = pendingTab
+    settingsScrollTops.value[pendingTab] = 0
+  }
   void restoreSettingsScroll()
   window.setTimeout(() => void restoreSettingsScroll(), 50)
 })

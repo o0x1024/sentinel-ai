@@ -526,8 +526,10 @@ impl SkillCreatorTool {
         let validation = Self::validate_skill_dir(&skill_dir, &args.skill_id);
         let next_steps = if validation.valid {
             vec![
-                "Use skills action=list to refresh discovery context.".to_string(),
-                format!("Use skills action=load with skill_id={} to inspect the instructions.", args.skill_id),
+                format!(
+                    "Invoke the skill with the skills tool: skills(skill=\"{}\") to verify it loads correctly.",
+                    args.skill_id
+                ),
                 "Test with prompts that should and should not trigger this skill; refine description if activation is imprecise.".to_string(),
             ]
         } else {

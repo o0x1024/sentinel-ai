@@ -11,6 +11,78 @@ use rmcp::{RoleClient, ServiceExt};
 use serde::{Deserialize, Serialize};
 use tokio::process::Command as TokioCommand;
 
+/// Retrieve the user's full shell PATH, cached for the process lifetime.
+///
+/// On macOS, app bundles launched via Finder/Dock inherit a minimal PATH
+/// (`/usr/bin:/bin:/usr/sbin:/sbin`). On Linux, apps launched from desktop
+/// entries or systemd may also have an incomplete PATH.
+/// On Windows, PATH is always inherited from the registry so this is a no-op.
+///
+/// This function runs the user's login shell to obtain the real PATH so that
+/// MCP stdio child processes can locate binaries in non-system directories
+/// (Homebrew, cargo, nvm, etc.).
+fn get_user_shell_path() -> Option<String> {
+    use once_cell::sync::Lazy;
+    use std::sync::Mutex;
+
+    static CACHED_PATH: Lazy<Mutex<Option<String>>> = Lazy::new(|| {
+        let result = resolve_full_path();
+        Mutex::new(result)
+    });
+
+    CACHED_PATH.lock().ok().and_then(|guard| guard.clone())
+}
+
+#[cfg(target_os = "windows")]
+fn resolve_full_path() -> Option<String> {
+    // Windows always inherits the full PATH from registry/system environment.
+    None
+}
+
+#[cfg(not(target_os = "windows"))]
+fn resolve_full_path() -> Option<String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| {
+        // SHELL may be absent in app bundle environments; probe common shells
+        for candidate in &["/bin/zsh", "/bin/bash", "/bin/sh"] {
+            if std::path::Path::new(candidate).exists() {
+                return candidate.to_string();
+            }
+        }
+        "/bin/sh".to_string()
+    });
+
+    let shell_name = std::path::Path::new(&shell)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("sh");
+
+    // fish outputs PATH entries space-separated; use printf for consistency
+    let print_cmd = if shell_name == "fish" {
+        "printf '%s' $PATH"
+    } else {
+        "printf '%s' \"$PATH\""
+    };
+
+    std::process::Command::new(&shell)
+        .args(["-l", "-c", print_cmd])
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .output()
+        .ok()
+        .and_then(|output| {
+            if output.status.success() {
+                let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if path.is_empty() || path == std::env::var("PATH").unwrap_or_default() {
+                    None
+                } else {
+                    Some(path)
+                }
+            } else {
+                None
+            }
+        })
+}
+
 pub type McpClient = RunningService<RoleClient, ClientInfo>;
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -76,6 +148,10 @@ pub async fn connect_mcp_client(config: &McpTransportConfig) -> Result<McpClient
 
             let mut cmd = TokioCommand::new(&config.command);
             cmd.args(&config.args);
+
+            if let Some(full_path) = get_user_shell_path() {
+                cmd.env("PATH", full_path);
+            }
 
             let transport = TokioChildProcess::new(cmd)
                 .map_err(|e| format!("Failed to create MCP stdio transport: {}", e))?;

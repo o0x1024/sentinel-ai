@@ -45,9 +45,8 @@ pub fn spawn_mission_scheduler(
     ai_manager: Arc<AiServiceManager>,
     app_handle: AppHandle,
     cancel: CancellationToken,
+    state: Arc<MissionSchedulerState>,
 ) -> tokio::task::JoinHandle<()> {
-    let state = MissionSchedulerState::default();
-
     tokio::spawn(async move {
         tracing::info!("Mission scheduler started (tick={}s)", SCHEDULER_TICK_SECS);
         let mut tick = tokio::time::interval(Duration::from_secs(SCHEDULER_TICK_SECS));
@@ -72,7 +71,7 @@ async fn dispatch_due_missions(
     db: &Arc<DatabaseService>,
     ai_manager: &Arc<AiServiceManager>,
     app_handle: &AppHandle,
-    state: &MissionSchedulerState,
+    state: &Arc<MissionSchedulerState>,
 ) -> Result<(), String> {
     if ensure_bot_console_access().is_err() {
         tracing::debug!("Mission scheduler skipped because Bot Console is not activated");
@@ -147,59 +146,15 @@ async fn dispatch_due_missions(
                 }
 
                 let mission_for_run = mission.clone();
-                let db_for_run = db.clone();
-                let ai_for_run = ai_manager.clone();
                 let app_for_run = app_handle.clone();
-                let running_ids = state.running_mission_ids.clone();
-                tokio::spawn(async move {
-                    let outcome = crate::services::mission_runner::execute_mission_run(
-                        &app_for_run,
-                        &db_for_run,
-                        &ai_for_run,
-                        &mission_for_run,
-                        &run.id,
-                    )
-                    .await;
-
-                    if let Ok(Some(finished_run)) =
-                        db_for_run.get_mission_run(&outcome.run_id).await
-                    {
-                        if let Err(error) =
-                            crate::services::mission_delivery::deliver_mission_result(
-                                &app_for_run,
-                                &db_for_run,
-                                &mission_for_run,
-                                &finished_run,
-                                true,
-                            )
-                            .await
-                        {
-                            tracing::warn!(
-                                "Mission {} run {} delivery failed: {}",
-                                mission_for_run.id,
-                                outcome.run_id,
-                                error
-                            );
-                        }
-                    }
-
-                    if outcome.status == "failed" {
-                        let _ = db_for_run
-                            .update_mission_last_error(
-                                &mission_for_run.id,
-                                outcome.error_message.as_deref(),
-                            )
-                            .await;
-                    } else {
-                        // Clear stale error on successful run
-                        let _ = db_for_run
-                            .update_mission_last_error(&mission_for_run.id, None)
-                            .await;
-                    }
-
-                    let _ = db_for_run.release_mission_lock(&mission_for_run.id).await;
-                    running_ids.write().await.remove(&mission_for_run.id);
-                });
+                crate::services::mission_run_worker::spawn_mission_run_worker(
+                    app_for_run,
+                    db.clone(),
+                    ai_manager.clone(),
+                    mission_for_run,
+                    run.id.clone(),
+                    Some(state.clone()),
+                );
             }
             Err(e) => {
                 tracing::error!("Mission scheduler: failed to create run for {mission_id}: {e}");

@@ -88,6 +88,7 @@ fn long_conversation_retrieval_keeps_core_goal_after_50_turns() {
         query: "what is the binding and exposure constraint for the service".to_string(),
         top_k: 5,
         include_reflection: false,
+        respect_auto_inject_suppression: false,
     };
 
     let items = retrieve_memory_items(&mut state, &query);

@@ -42,7 +42,7 @@
 
       <div v-if="!isBotConsoleActivated" class="alert alert-warning">
         <i class="fas fa-lock"></i>
-        <span>当前未完成服务端激活，Bot 控制台可预览会话、消息和历史执行，账号配置、登录、Mission 变更和运行会被限制。</span>
+        <span>当前未完成本地 License 激活，Bot 控制台可预览会话、消息和历史执行，账号配置、登录、Mission 变更和运行会被限制。</span>
       </div>
 
       <section class="rounded-lg border border-base-300 bg-base-100 px-4 py-3">
@@ -246,6 +246,13 @@
                   @click="setActiveTab('missions')"
                 >
                   {{ t('botConsole.tabs.missions') }}
+                </button>
+                <button
+                  class="tab"
+                  :class="{ 'tab-active': activeTab === 'observer' }"
+                  @click="setActiveTab('observer')"
+                >
+                  {{ t('botConsole.tabs.observer') }}
                 </button>
               </div>
             </div>
@@ -617,6 +624,10 @@
                 :owner-ref="selectedPeer ? `${selectedPeer.transport}:${selectedPeer.account_id}:${selectedPeer.peer_type}:${selectedPeer.peer_id}` : undefined"
               />
             </div>
+
+            <div v-else-if="activeTab === 'observer'" class="flex-1 overflow-hidden p-4">
+              <ObserverPanel />
+            </div>
           </template>
         </section>
       </div>
@@ -661,6 +672,7 @@ import { useRoute, useRouter } from 'vue-router'
 import AppDialog from '@/components/AppDialog.vue'
 import BotAccountsPanel from '@/components/Bot/BotAccountsPanel.vue'
 import MissionsPanel from '@/components/Bot/MissionsPanel.vue'
+import ObserverPanel from '@/components/Bot/ObserverPanel.vue'
 import { SUPPORTED_BOT_TRANSPORTS } from '@/components/Bot/botTransportCatalog'
 import {
   getAiTurnLogDetail,
@@ -702,8 +714,8 @@ const peerStateFilter = ref(typeof route.query.peerState === 'string' ? route.qu
 const executionFilter = ref(typeof route.query.executionFilter === 'string' ? route.query.executionFilter : 'all')
 const selectedPeerKey = ref('')
 const selectedExecutionRunId = ref('')
-const activeTab = ref<'messages' | 'executions' | 'turnLogs' | 'missions'>(
-  route.query.tab === 'executions' || route.query.tab === 'turnLogs' || route.query.tab === 'missions'
+const activeTab = ref<'messages' | 'executions' | 'turnLogs' | 'missions' | 'observer'>(
+  route.query.tab === 'executions' || route.query.tab === 'turnLogs' || route.query.tab === 'missions' || route.query.tab === 'observer'
     ? route.query.tab
     : 'messages',
 )
@@ -1272,7 +1284,7 @@ async function focusExecutionRun(runId?: string | null) {
   await syncRoute()
 }
 
-async function setActiveTab(tab: 'messages' | 'executions' | 'turnLogs' | 'missions') {
+async function setActiveTab(tab: 'messages' | 'executions' | 'turnLogs' | 'missions' | 'observer') {
   if (activeTab.value === tab) return
   activeTab.value = tab
   await syncRoute()

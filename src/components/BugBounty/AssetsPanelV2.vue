@@ -536,7 +536,6 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
-import { emit as tauriEmit } from '@tauri-apps/api/event'
 import { save } from '@tauri-apps/plugin-dialog'
 import { useI18n } from 'vue-i18n'
 import { useRouter } from 'vue-router'
@@ -554,7 +553,7 @@ import SurfaceIconButton from './SurfaceIconButton.vue'
 import SurfaceTableColumnFilter from './SurfaceTableColumnFilter.vue'
 import SurfaceTableTextFilter from './SurfaceTableTextFilter.vue'
 import { type SurfaceAssetEditPayload, type SurfaceAssetEditTarget } from './surfaceAssetEditSupport'
-import { buildReferencedSurfaceAsset } from './surfaceAssetUtils'
+import { buildReferencedSurfaceAsset, queueSurfaceAssetForAssistant } from './surfaceAssetUtils'
 import {
   sanitizeExportFilenamePart,
   type SurfaceAssetExportType,
@@ -1593,9 +1592,7 @@ const sendAssetToAssistant = async (assetId?: string | null) => {
       return
     }
 
-    await tauriEmit('asset:send-to-assistant', {
-      assets: [buildReferencedSurfaceAsset(detail)],
-    })
+    queueSurfaceAssetForAssistant(buildReferencedSurfaceAsset(detail))
     toast.success(t('bugBounty.surface.inventory.actions.assistantSuccess'))
     await router.push('/ai-assistant')
   } catch (error) {

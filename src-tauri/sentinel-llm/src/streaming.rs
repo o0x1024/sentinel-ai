@@ -15,8 +15,8 @@ use tracing::{error, info, warn};
 
 use crate::config::LlmConfig;
 use crate::log::{
-    build_log_session_id, log_error_response, log_request, log_response, log_stream_event,
-    log_turn_summary,
+    build_log_session_id, log_context_messages, log_error_response, log_request, log_response,
+    log_stream_event, log_turn_summary,
 };
 use crate::message::{
     build_user_message_with_images, convert_chat_history, ChatMessage, ImageAttachment,
@@ -107,6 +107,10 @@ fn normalize_jsonish_string(raw: &str) -> serde_json::Value {
 }
 
 fn infer_tool_result_success_for_turn(value: &serde_json::Value) -> bool {
+    if let Some(success) = sentinel_tools::skills_tool_success_from_value(value) {
+        return success;
+    }
+
     fn is_structured_http_response(map: &serde_json::Map<String, serde_json::Value>) -> bool {
         map.get("status_code").and_then(|v| v.as_u64()).is_some()
             && map.get("headers").and_then(|v| v.as_object()).is_some()
@@ -348,6 +352,20 @@ impl StreamingLlmClient {
             Some(preamble),
             user_prompt,
         );
+
+        if !history.is_empty() {
+            let context_pairs: Vec<(&str, &str)> = history
+                .iter()
+                .map(|m| (m.role.as_str(), m.content.as_str()))
+                .collect();
+            log_context_messages(
+                &session_id,
+                conversation_id,
+                &provider,
+                model,
+                &context_pairs,
+            );
+        }
 
         self.config.setup_env_vars();
 

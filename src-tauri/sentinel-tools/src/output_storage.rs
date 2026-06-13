@@ -7,8 +7,8 @@ use crate::docker_sandbox::DockerSandbox;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Default storage threshold (16KB)
-const DEFAULT_STORAGE_THRESHOLD: usize = 16_000;
+/// Default storage threshold (50KB, aligned with Claude Code tool result cap)
+const DEFAULT_STORAGE_THRESHOLD: usize = 50_000;
 const DEFAULT_READBACK_CHUNK_LINES: usize = 200;
 
 use once_cell::sync::Lazy;
@@ -497,12 +497,24 @@ pub async fn store_history_in_container_with_id(
     Ok(container_path)
 }
 
-/// Store conversation history on host filesystem (isolated by execution_id)
+/// Store conversation history on host filesystem (isolated by execution_id).
+/// When `custom_base_dir` is provided, uses it instead of the default app data directory.
 pub async fn store_history_on_host(
     history_content: &str,
     execution_id: Option<&str>,
+    custom_base_dir: Option<&str>,
 ) -> anyhow::Result<String> {
-    let context_dir = get_host_execution_context_dir(execution_id);
+    let context_dir = match custom_base_dir.filter(|d| !d.trim().is_empty()) {
+        Some(base) => {
+            let base_path = std::path::PathBuf::from(base);
+            let scope_id = execution_id.map(|id| resolve_session_scope(id));
+            match execution_dir_name(scope_id.as_deref()) {
+                Some(dir_name) => base_path.join(dir_name),
+                None => base_path,
+            }
+        }
+        None => get_host_execution_context_dir(execution_id),
+    };
     std::fs::create_dir_all(&context_dir)
         .map_err(|e| anyhow::anyhow!("Failed to create context directory: {}", e))?;
 
@@ -737,15 +749,23 @@ pub async fn store_output_unified(
         return Ok(StorageResult::Direct(output.to_string()));
     }
 
-    // Check if Docker is available
-    if !DockerSandbox::is_docker_available().await {
-        tracing::debug!("Docker not available, using host filesystem storage");
+    // Respect the user's configured execution mode: only use container
+    // storage when the execution mode is explicitly set to Docker AND
+    // Docker is actually available.
+    use crate::shell::get_shell_config;
+    let shell_config = get_shell_config().await;
+    let docker_mode = shell_config.default_execution_mode
+        == crate::shell::ShellExecutionMode::Docker
+        && shell_config.docker_config.is_some()
+        && DockerSandbox::is_docker_available().await;
+
+    if !docker_mode {
+        tracing::debug!(
+            "Execution mode is host or Docker unavailable, using host filesystem storage"
+        );
         return store_output_on_host(tool_name, output, call_id, execution_id).await;
     }
 
-    // Try to use container storage
-    use crate::shell::get_shell_config;
-    let shell_config = get_shell_config().await;
     let docker_config = shell_config.docker_config.unwrap_or_default();
     let sandbox = DockerSandbox::new(docker_config);
 

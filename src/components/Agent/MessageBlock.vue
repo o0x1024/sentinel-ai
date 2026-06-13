@@ -132,26 +132,15 @@
     </div>
   </div>
 
-  <!-- Skill Loaded Message -->
-  <div
-    v-else-if="isSkillLoaded"
-    class="rounded-lg overflow-hidden bg-success/10 border-l-4 border-success mb-2"
-  >
-    <div class="flex items-center gap-3 px-4 py-3 bg-success/20 border-b border-success/20">
-      <div
-        class="w-8 h-8 rounded-full bg-success flex items-center justify-center flex-shrink-0 shadow-sm"
-      >
-        <i class="fas fa-lightbulb text-white text-sm"></i>
-      </div>
-      <div class="flex-1">
-        <div class="font-semibold text-sm text-success">
-          {{ t('agent.skillLoadedTitle') }}
-        </div>
-        <div class="text-xs text-base-content/70 mt-0.5">
-          {{ message.metadata?.skill_name }} ({{ message.metadata?.skill_id }})
-        </div>
-      </div>
-    </div>
+  <!-- Skill activity (loaded / forked) -->
+  <div v-else-if="isSkillActivity" class="mb-2">
+    <SkillActivityCard
+      :mode="skillActivityMode"
+      :skill-id="skillActivitySkillId"
+      :skill-name="skillActivitySkillName"
+      :referenced-files="skillActivityReferencedFiles"
+      :result-preview="skillActivityResultPreview"
+    />
   </div>
 
   <!-- Deferred Tools Activated Message -->
@@ -226,40 +215,14 @@
     </div>
   </div>
 
-  <!-- Shell Tool - Render as independent message block -->
-  <div v-else-if="isSkillsToolCard" class="space-y-1">
-    <TeamMessageAttribution
-      v-if="showTeamAttribution"
-      :label="teamSpeakerLabel"
+  <!-- Skills read_file — collapsible helper file panel -->
+  <div v-else-if="isSkillsReadFileTool" class="mb-2">
+    <SkillHelperFilePanel
+      :args="message.metadata?.tool_args"
+      :result="message.metadata?.tool_result"
+      :error="message.metadata?.error"
+      :status="message.metadata?.status"
     />
-    <div
-      :class="['rounded-lg overflow-hidden border-l-4 mb-2', skillsCardContainerClass]"
-    >
-      <div :class="['flex items-center gap-3 px-4 py-3 border-b', skillsCardHeaderClass]">
-        <div
-          :class="[
-            'w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 shadow-sm',
-            skillsCardIconClass,
-          ]"
-        >
-          <i class="fas fa-book-open text-white text-sm"></i>
-        </div>
-        <div class="flex-1">
-          <div :class="['font-semibold text-sm', skillsCardTitleClass]">
-            {{ skillsCardTitle }}
-          </div>
-          <div v-if="skillsCardTarget" class="text-xs text-base-content/70 mt-0.5">
-            {{ skillsCardTarget }}
-          </div>
-        </div>
-        <span
-          v-if="toolStatus"
-          :class="['status-badge px-2 py-0.5 rounded-full text-xs font-medium', toolStatusClass]"
-        >
-          {{ toolStatusText }}
-        </span>
-      </div>
-    </div>
   </div>
 
   <!-- Shell Tool - Render as independent message block -->
@@ -766,8 +729,13 @@ import { buildStoredArtifactViews } from './storedArtifactSupport'
 import {
   isFileToolName,
   isSearchToolName,
+  isSkillsToolName,
   shouldRenderSpecializedShellTool,
 } from './toolRenderSupport'
+import {
+  isSkillActivityMessage,
+  parseSkillActivityMetadata,
+} from './skillsToolSupport'
 
 const { t } = useI18n()
 
@@ -776,6 +744,8 @@ const FileToolResult = defineAsyncComponent(() => import('./FileToolResult.vue')
 const MemoryToolResult = defineAsyncComponent(() => import('./MemoryToolResult.vue'))
 const ParallelModelResultPanel = defineAsyncComponent(() => import('./ParallelModelResultPanel.vue'))
 const SearchToolResult = defineAsyncComponent(() => import('./SearchToolResult.vue'))
+const SkillActivityCard = defineAsyncComponent(() => import('./SkillActivityCard.vue'))
+const SkillHelperFilePanel = defineAsyncComponent(() => import('./SkillHelperFilePanel.vue'))
 const ShellToolResult = defineAsyncComponent(() => import('./ShellToolResult.vue'))
 const StoredArtifactPanel = defineAsyncComponent(() => import('./StoredArtifactPanel.vue'))
 const TeamMessageAttribution = defineAsyncComponent(() => import('./TeamMessageAttribution.vue'))
@@ -917,65 +887,12 @@ const showMessageActions = computed(() => {
 const toolName = computed(() => props.message.metadata?.tool_name)
 
 // Check if this is a skills tool
-const isSkillsTool = computed(() => {
-  const name = props.message.metadata?.tool_name?.toLowerCase()
-  return name === 'skills'
-})
+const isSkillsTool = computed(() => isSkillsToolName(props.message.metadata?.tool_name))
 
-const skillsAction = computed(() => {
-  const action = props.message.metadata?.tool_args?.action
-  return typeof action === 'string' ? action.toLowerCase() : ''
-})
-
-const isSkillsCardAction = computed(() => {
-  return skillsAction.value === 'read_skill_file'
-})
-
-const isSkillsToolCard = computed(() => {
-  return props.message.type === 'tool_call' && isSkillsTool.value && isSkillsCardAction.value
-})
-
-const skillsCardTitle = computed(() => {
-  if (toolStatus.value === 'failed') {
-    return 'Skill file load failed'
-  }
-  if (skillsAction.value === 'load') {
-    return t('agent.skillLoadedTitle')
-  }
-  return 'Skill file loaded'
-})
-
-const skillsCardContainerClass = computed(() => {
-  if (toolStatus.value === 'failed') return 'bg-error/10 border-error'
-  return 'bg-success/10 border-success'
-})
-
-const skillsCardHeaderClass = computed(() => {
-  if (toolStatus.value === 'failed') return 'bg-error/20 border-error/20'
-  return 'bg-success/20 border-success/20'
-})
-
-const skillsCardIconClass = computed(() => {
-  if (toolStatus.value === 'failed') return 'bg-error'
-  return 'bg-success'
-})
-
-const skillsCardTitleClass = computed(() => {
-  if (toolStatus.value === 'failed') return 'text-error'
-  return 'text-success'
-})
-
-const skillsCardTarget = computed(() => {
-  const args = props.message.metadata?.tool_args || {}
-  if (skillsAction.value === 'load') {
-    if (args.skill_id) return String(args.skill_id)
-    return ''
-  }
-  const parts: string[] = []
-  if (args.skill_id) parts.push(String(args.skill_id))
-  if (args.relative_path) parts.push(String(args.relative_path))
-  if (args.path) parts.push(String(args.path))
-  return parts.join(' / ')
+const isSkillsReadFileTool = computed(() => {
+  if (props.message.type !== 'tool_call' || !isSkillsTool.value) return false
+  const args = props.message.metadata?.tool_args
+  return args && typeof args === 'object' && (args as Record<string, unknown>).action === 'read_file'
 })
 
 // Check if this is a shell tool
@@ -1068,10 +985,33 @@ const isGlobalSummary = computed(() => {
   return props.message.type === 'system' && props.message.metadata?.kind === 'global_summary'
 })
 
-// Check if this is a skill loaded system message
-const isSkillLoaded = computed(() => {
-  return props.message.type === 'system' && props.message.metadata?.kind === 'skill_loaded'
+const isSkillActivity = computed(() => isSkillActivityMessage(props.message))
+
+const skillActivityMetadata = computed(() => parseSkillActivityMetadata(props.message.metadata))
+
+const skillActivityMode = computed<'invoke' | 'fork'>(() =>
+  skillActivityMetadata.value?.mode === 'fork' ||
+  skillActivityMetadata.value?.kind === 'skill_forked'
+    ? 'fork'
+    : 'invoke',
+)
+
+const skillActivitySkillId = computed(
+  () => String(skillActivityMetadata.value?.skill_id || 'unknown'),
+)
+
+const skillActivitySkillName = computed(
+  () => String(skillActivityMetadata.value?.skill_name || skillActivitySkillId.value),
+)
+
+const skillActivityReferencedFiles = computed(() => {
+  const files = skillActivityMetadata.value?.referenced_files
+  return Array.isArray(files) ? files.filter((file) => typeof file === 'string') : []
 })
+
+const skillActivityResultPreview = computed(() =>
+  String(skillActivityMetadata.value?.result_preview || ''),
+)
 
 const isToolsActivated = computed(() => {
   return props.message.type === 'system' && props.message.metadata?.kind === 'tools_activated'

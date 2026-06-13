@@ -7,6 +7,7 @@ import { useAgentThinkingSegments } from '@/composables/useAgentThinkingSegments
 import { useTerminal } from '@/composables/useTerminal'
 import { buildToolsActivatedMessage, buildToolsPreview } from '@/utils/agentToolActivation'
 import { applyFileVerificationStatuses } from '@/components/Agent/fileVerificationSupport'
+import { parseSkillsToolResult } from '@/components/Agent/skillsToolSupport'
 import {
   appendParallelChunk,
   applyParallelSessionStats,
@@ -509,11 +510,16 @@ export function useAgentEvents(
         source?: string
         compression_aggressiveness?: string
       } | null
+      retrieval_ids?: string[]
+      retrieval_tokens?: number
+      memory_retrieval?: any
     }>('agent:context_usage', event => {
       const payload = event.payload
       if (!matchesTarget(payload.execution_id, payload)) return
 
+      const previous = contextUsage.value
       contextUsage.value = {
+        ...(previous ?? buildContextUsageSkeleton()),
         usedTokens: payload.used_tokens,
         maxTokens: payload.max_tokens,
         usagePercentage: payload.usage_percentage,
@@ -544,6 +550,11 @@ export function useAgentEvents(
         sentinelClarificationStatus: payload.sentinel_clarification?.status || null,
         sentinelCompressionAggressiveness:
           payload.sentinel_clarification?.compression_aggressiveness || null,
+        memoryRetrieval: mapMemoryRetrieval(payload.memory_retrieval) ?? previous?.memoryRetrieval ?? null,
+        retrievalIds: Array.isArray(payload.retrieval_ids)
+          ? payload.retrieval_ids.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+          : (previous?.retrievalIds ?? []),
+        retrievalTokens: Number(payload.retrieval_tokens ?? previous?.retrievalTokens ?? 0) || 0,
       }
       console.log('[useAgentEvents] Context usage updated:', contextUsage.value)
     })
@@ -623,7 +634,10 @@ export function useAgentEvents(
 
     const unlistenContextSnapshot = await listen<{
       execution_id: string
+      conversation_id?: string
       memory_retrieval?: any
+      retrieval_ids?: string[]
+      retrieval_tokens?: number
       sentinel_mode?: boolean
       sentinel_intent_id?: string | null
       sentinel_intent_confidence?: number | null
@@ -638,6 +652,10 @@ export function useAgentEvents(
 
       const next = contextUsage.value ? { ...contextUsage.value } : buildContextUsageSkeleton()
       next.memoryRetrieval = mapMemoryRetrieval(payload.memory_retrieval)
+      next.retrievalIds = Array.isArray(payload.retrieval_ids)
+        ? payload.retrieval_ids.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+        : []
+      next.retrievalTokens = Number(payload.retrieval_tokens ?? 0) || 0
       next.sentinelMode = payload.sentinel_mode === true
       next.sentinelIntentId = payload.sentinel_intent_id || next.sentinelIntentId || null
       next.sentinelIntentConfidence =
@@ -1088,6 +1106,15 @@ export function useAgentEvents(
             existingMsg.metadata.tracked_artifacts = normalizeTrackedArtifacts(
               newPayload.tracked_artifacts
             )
+            if (callInfo.tool_name === 'skills') {
+              const parsedSkills = parseSkillsToolResult(newPayload.result ?? resultContent)
+              if (parsedSkills?.referencedFiles?.length) {
+                existingMsg.metadata.referenced_files = parsedSkills.referencedFiles
+              }
+              if (parsedSkills?.warnings?.length) {
+                existingMsg.metadata.skill_warnings = parsedSkills.warnings
+              }
+            }
             existingMsg.content = `工具调用完成: ${callInfo.tool_name}`
             pushShellFallbackNotice({
               executionIdForMsg: payload.execution_id,
@@ -1289,38 +1316,74 @@ export function useAgentEvents(
     )
     unlisteners.push(unlistenToolsActivated)
 
-    // 监听 agent:skill_loaded 事件（显示技能加载提示）
-    const unlistenSkillLoaded = await listen<{
+    // 监听 agent:skill_loaded / agent:skill_forked 事件（显示技能活动提示）
+    const pushSkillActivityMessage = (payload: {
       execution_id: string
       skill_id: string
       skill_name: string
-    }>('agent:skill_loaded', event => {
-      const payload = event.payload
+      mode?: string
+      referenced_files?: string[]
+      result_preview?: string
+    }, kind: 'skill_loaded' | 'skill_forked') => {
       const parallelChild = getParallelChild(payload.execution_id)
+      const title = kind === 'skill_forked' ? '技能已在子 Agent 中执行' : '技能已加载'
       if (parallelChild) {
         appendParallelSystemEvent(
           parallelChild.item,
-          '技能已加载',
-          `${payload.skill_name} (${payload.skill_id})`
+          title,
+          `${payload.skill_name} (${payload.skill_id})`,
         )
         flushParallelChild(parallelChild)
         return
       }
       if (!matchesTarget(payload.execution_id, payload)) return
 
+      const activityMetadata = {
+        kind,
+        skill_id: payload.skill_id,
+        skill_name: payload.skill_name,
+        mode: payload.mode || (kind === 'skill_forked' ? 'fork' : 'invoke'),
+        referenced_files: Array.isArray(payload.referenced_files)
+          ? payload.referenced_files
+          : [],
+        result_preview: payload.result_preview,
+      }
+
       messages.value.push({
         id: crypto.randomUUID(),
         type: 'system',
-        content: `Skill loaded: ${payload.skill_name} (${payload.skill_id})`,
+        content:
+          kind === 'skill_forked'
+            ? `Skill forked: ${payload.skill_name} (${payload.skill_id})`
+            : `Skill loaded: ${payload.skill_name} (${payload.skill_id})`,
         timestamp: Date.now(),
-        metadata: {
-          kind: 'skill_loaded',
-          skill_id: payload.skill_id,
-          skill_name: payload.skill_name,
-        },
+        metadata: activityMetadata,
       })
+    }
+
+    const unlistenSkillLoaded = await listen<{
+      execution_id: string
+      skill_id: string
+      skill_name: string
+      mode?: string
+      referenced_files?: string[]
+      result_preview?: string
+    }>('agent:skill_loaded', event => {
+      pushSkillActivityMessage(event.payload, 'skill_loaded')
     })
     unlisteners.push(unlistenSkillLoaded)
+
+    const unlistenSkillForked = await listen<{
+      execution_id: string
+      skill_id: string
+      skill_name: string
+      mode?: string
+      referenced_files?: string[]
+      result_preview?: string
+    }>('agent:skill_forked', event => {
+      pushSkillActivityMessage(event.payload, 'skill_forked')
+    })
+    unlisteners.push(unlistenSkillForked)
 
     // 监听 agent:tool_executed 事件
     const unlistenToolExecuted = await listen<AgentToolExecutedEvent>(

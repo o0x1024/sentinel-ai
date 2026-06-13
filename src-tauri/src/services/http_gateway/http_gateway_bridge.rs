@@ -8,12 +8,7 @@ pub(super) async fn bridge_invoke(
         "init_shell_permission_handler" => Ok(json!(true)),
         "get_license_info" => Ok(json!({
             "is_licensed": true,
-            "needs_activation": false,
-            "trial_active": false,
-            "trial_started_at": null,
-            "trial_expires_at": null,
-            "trial_remaining_seconds": null,
-            "trial_days_remaining": null
+            "needs_activation": false
         })),
         "get_pending_shell_permissions" | "get_pending_shell_permissionss" => {
             match crate::commands::tool_commands::get_pending_shell_permissions().await {
@@ -1323,7 +1318,7 @@ pub(super) async fn bridge_invoke(
                 }
             }
         }
-        "read_skill_file" => {
+        "read_file" => {
             let id = req
                 .payload
                 .get("id")
@@ -1337,16 +1332,16 @@ pub(super) async fn bridge_invoke(
                 .unwrap_or_default()
                 .to_string();
             if id.is_empty() || path.is_empty() {
-                Err("read_skill_file missing id or path".to_string())
+                Err("read_file missing id or path".to_string())
             } else {
                 let root = skills_root(state.db.as_ref());
                 let skill_dir = root.join(&id);
                 match resolve_skill_file_for_read(&skill_dir, &path) {
                     Ok(p) => match std::fs::read_to_string(&p) {
                         Ok(v) => Ok(json!(v)),
-                        Err(e) => Err(format!("read_skill_file failed: {}", e)),
+                        Err(e) => Err(format!("read_file failed: {}", e)),
                     },
-                    Err(e) => Err(format!("read_skill_file failed: {}", e)),
+                    Err(e) => Err(format!("read_file failed: {}", e)),
                 }
             }
         }

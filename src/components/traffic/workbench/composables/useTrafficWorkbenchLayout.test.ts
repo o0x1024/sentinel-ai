@@ -11,9 +11,9 @@ import {
 
 describe('useTrafficWorkbenchLayout helpers', () => {
   it('switches grid mode at the expected breakpoints', () => {
-    expect(getTrafficWorkbenchGridMode(1024)).toBe('stacked')
-    expect(getTrafficWorkbenchGridMode(1280)).toBe('split')
-    expect(getTrafficWorkbenchGridMode(1280, 'top-bottom')).toBe('top-bottom')
+    expect(getTrafficWorkbenchGridMode(1023)).toBe('stacked')
+    expect(getTrafficWorkbenchGridMode(1024)).toBe('split')
+    expect(getTrafficWorkbenchGridMode(1024, 'top-bottom')).toBe('top-bottom')
   })
 
   it('builds split grid templates', () => {

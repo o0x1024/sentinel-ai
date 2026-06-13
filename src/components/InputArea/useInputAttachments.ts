@@ -7,6 +7,7 @@ import { dialog } from '@/composables/useDialog'
 
 export const useInputAttachments = (params: {
   conversationId: () => string | null
+  isActive?: () => boolean
   emitAddAttachments: (files: string[]) => void
   emitAddDocuments: (files: PendingDocumentAttachment[]) => void
   emitDocumentProcessed: (result: ProcessedDocumentResult) => void
@@ -190,6 +191,7 @@ export const useInputAttachments = (params: {
   }
 
   const onDragOver = (event: DragEvent) => {
+    if (params.isActive && !params.isActive()) return
     if (event.dataTransfer?.types.includes('Files')) {
       isDragOver.value = true
     }
@@ -204,9 +206,16 @@ export const useInputAttachments = (params: {
   }
 
   const setupNativeDragDrop = async () => {
+    if (unlistenDragDrop) {
+      return
+    }
     try {
       const webview = getCurrentWebviewWindow()
       unlistenDragDrop = await webview.onDragDropEvent(async (event) => {
+        if (params.isActive && !params.isActive()) {
+          isDragOver.value = false
+          return
+        }
         const payload = event.payload as any
         const paths = Array.isArray(payload?.paths) ? payload.paths : []
         const hasFilePaths = paths.length > 0

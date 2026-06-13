@@ -35,7 +35,7 @@ sentinel-workflow = { path = "sentinel-workflow" }
 sentinel-traffic = { path = "sentinel-traffic", default-features = false }
 sentinel-notify = { path = "sentinel-notify" }
 sentinel-llm = { path = "sentinel-llm" }
-sentinel-license = { path = "sentinel-license" }
+sentinel-license = { path = "sentinel-license", features = ["enforce-license"] }
 sentinel-plugins = { path = "sentinel-plugins", default-features = false }
 sentinel-bounty = { path = "sentinel-bounty" }
 
@@ -136,6 +136,9 @@ cipher = { version = "0.4", features = ["block-padding"] }
 hex = "0.4"
 sm4 = "0.5"
 des = "0.8"
+aes-gcm = "0.10"
+rsa = { version = "0.9", features = ["sha2"] }
+sha1 = "0.10"
 
 # 额外的 AI 相关依赖
 base64 = "0.22"

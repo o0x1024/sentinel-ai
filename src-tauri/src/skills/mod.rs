@@ -16,8 +16,20 @@ static SKILLS_REF_UNAVAILABLE_LOGGED: AtomicBool = AtomicBool::new(false);
 pub struct SkillFrontmatter {
     pub name: String,
     pub description: String,
-    #[serde(default)]
+    #[serde(default, alias = "when-to-use")]
     pub when_to_use: Option<String>,
+    #[serde(default, alias = "allowed-tools")]
+    pub allowed_tools: Option<Vec<String>>,
+    pub model: Option<String>,
+    pub effort: Option<String>,
+    #[serde(default)]
+    pub context: Option<String>,
+    #[serde(default)]
+    pub agent: Option<String>,
+    #[serde(default, alias = "disable-model-invocation")]
+    pub disable_model_invocation: Option<bool>,
+    #[serde(default, alias = "user-invocable")]
+    pub user_invocable: Option<bool>,
 }
 
 #[derive(Debug, Clone)]

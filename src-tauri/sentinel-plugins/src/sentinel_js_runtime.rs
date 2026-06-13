@@ -23,7 +23,7 @@ pub(crate) fn with_plugin_ctx<R>(f: impl FnOnce(&PluginContext) -> R) -> R {
     })
 }
 
-pub(crate) fn set_plugin_ctx(ctx: &PluginContext) {
+pub fn set_plugin_ctx(ctx: &PluginContext) {
     PLUGIN_CTX.with(|cell| {
         *cell.borrow_mut() = Some(ctx.clone());
     });
@@ -615,7 +615,7 @@ fn register_dictionary_bindings(bindings: &mut HostBindingsExt) {
 }
 
 fn register_tls_bindings(bindings: &mut HostBindingsExt) {
-    bindings.register_fn1("__sentinel_get_tls_certificate", |json_str| {
+    bindings.register_fn1("__sentinel_get_tls_certificate", |_json_str| {
         let response = crate::plugin_ops::TlsCertificateResponse {
             success: false,
             cert: None,

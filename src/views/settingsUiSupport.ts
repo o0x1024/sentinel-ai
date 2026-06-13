@@ -1,7 +1,7 @@
 import {
   OUTPUT_STORAGE_THRESHOLD_DEFAULT,
   OUTPUT_STORAGE_THRESHOLD_MIN,
-  OUTPUT_STORAGE_THRESHOLD_RECOMMENDED_MAX,
+  OUTPUT_STORAGE_THRESHOLD_MAX,
 } from './settingsDefinitions'
 import { setLanguage as applyI18nLanguage } from '@/i18n'
 
@@ -67,7 +67,7 @@ const ensureAutoThemeListener = () => {
 export const clampOutputStorageThreshold = (value: number): number => {
   if (!Number.isFinite(value)) return OUTPUT_STORAGE_THRESHOLD_DEFAULT
   return Math.min(
-    OUTPUT_STORAGE_THRESHOLD_RECOMMENDED_MAX,
+    OUTPUT_STORAGE_THRESHOLD_MAX,
     Math.max(OUTPUT_STORAGE_THRESHOLD_MIN, Math.round(value)),
   )
 }

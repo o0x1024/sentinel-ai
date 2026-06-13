@@ -390,7 +390,7 @@
                   <th>来源</th>
                   <th>Projection</th>
                   <th>状态</th>
-                  <th class="w-24">操作</th>
+                  <th class="w-40">操作</th>
                 </tr>
               </thead>
               <tbody>
@@ -438,13 +438,22 @@
                         {{ item.retrievable_projection_ready ? 'retrievable' : 'degraded' }}
                       </span>
                       <span v-if="item.projection_issue" class="badge badge-warning badge-sm">issue</span>
+                      <span
+                        v-if="!memoryAutoInjectEnabled(item.record)"
+                        class="badge badge-warning badge-sm"
+                      >
+                        no auto-inject
+                      </span>
+                      <span v-if="item.record.status === 'archived'" class="badge badge-ghost badge-sm">
+                        archived
+                      </span>
                     </div>
                     <div v-if="item.projection?.last_error" :class="memoryProjectionMessageClass(item)">
                       {{ item.projection.last_error }}
                     </div>
                   </td>
                   <td>
-                    <div class="flex items-center gap-1">
+                    <div class="flex flex-wrap items-center gap-1">
                       <button
                         class="btn btn-ghost btn-xs"
                         :title="`复制 ${item.record.id}`"
@@ -459,6 +468,30 @@
                         @click="openOriginConversation(item.record)"
                       >
                         <i class="fas fa-crosshairs"></i>
+                      </button>
+                      <button
+                        v-if="item.record.status !== 'archived'"
+                        class="btn btn-ghost btn-xs"
+                        title="编辑记忆"
+                        @click="openMemoryEdit(item)"
+                      >
+                        <i class="fas fa-edit"></i>
+                      </button>
+                      <button
+                        v-if="item.record.status !== 'archived'"
+                        class="btn btn-ghost btn-xs text-warning"
+                        :title="memoryAutoInjectEnabled(item.record) ? '禁用自动注入' : '启用自动注入'"
+                        @click="toggleMemoryAutoInject(item)"
+                      >
+                        <i :class="['fas', memoryAutoInjectEnabled(item.record) ? 'fa-ban' : 'fa-check']"></i>
+                      </button>
+                      <button
+                        v-if="item.record.status !== 'archived'"
+                        class="btn btn-ghost btn-xs text-error"
+                        title="删除记忆"
+                        @click="deleteMemoryRecord(item)"
+                      >
+                        <i class="fas fa-trash"></i>
                       </button>
                     </div>
                   </td>
@@ -477,6 +510,35 @@
       </form>
     </AppDialog>
 
+    <AppDialog :class="['modal', { 'modal-open': editingMemoryItem !== null }]">
+      <div class="modal-box max-w-3xl" v-if="editingMemoryItem">
+        <h3 class="font-bold text-lg mb-4">编辑 Memory</h3>
+        <div class="space-y-3">
+          <label class="form-control">
+            <div class="label py-1"><span class="label-text">类型</span></div>
+            <input v-model="memoryEditKind" class="input input-bordered input-sm" />
+          </label>
+          <label class="form-control">
+            <div class="label py-1"><span class="label-text">标题</span></div>
+            <input v-model="memoryEditTitle" class="input input-bordered input-sm" />
+          </label>
+          <label class="form-control">
+            <div class="label py-1"><span class="label-text">内容</span></div>
+            <textarea v-model="memoryEditText" class="textarea textarea-bordered min-h-40 font-mono text-sm"></textarea>
+          </label>
+        </div>
+        <div class="modal-action">
+          <button class="btn btn-ghost" @click="closeMemoryEdit">取消</button>
+          <button class="btn btn-primary" :disabled="memoryEditSaving" @click="saveMemoryEdit">
+            {{ memoryEditSaving ? '保存中…' : '保存' }}
+          </button>
+        </div>
+      </div>
+      <form method="dialog" class="modal-backdrop bg-black/50" @click="closeMemoryEdit">
+        <button>close</button>
+      </form>
+    </AppDialog>
+
   </div>
 </template>
 
@@ -491,6 +553,13 @@ import ShellConfigModal from './ShellConfigModal.vue'
 import ShellTerminal from './ShellTerminal.vue'
 import UnifiedToolTest from './UnifiedToolTest.vue'
 import ExploitDbManagerModal from './ExploitDbManagerModal.vue'
+import {
+  deleteDurableMemory,
+  memoryAutoInjectEnabled,
+  setDurableMemoryAutoInject,
+  updateDurableMemory,
+  type DurableMemoryDiagnosticsItem as SharedDurableMemoryDiagnosticsItem,
+} from '@/composables/useRetrievedMemory'
 
 type BuiltinSourceFilter = 'builtin' | 'workflow' | 'plugin'
 
@@ -545,16 +614,13 @@ interface DurableMemoryRecord {
   source: string
   confidence: number
   importance: number
+  status: string
+  tags_json: string
   origin_execution_id?: string | null
   updated_at_ms: number
 }
 
-interface DurableMemoryDiagnosticsItem {
-  record: DurableMemoryRecord
-  projection?: DurableMemoryProjectionState | null
-  retrievable_projection_ready: boolean
-  projection_issue: boolean
-}
+interface DurableMemoryDiagnosticsItem extends SharedDurableMemoryDiagnosticsItem {}
 
 const categoryConfigs: CategoryConfig[] = [
   { key: 'file_code', label: '文件与代码', icon: 'fas fa-code', btnClass: 'btn-info', badgeClass: 'badge-info', bgClass: 'bg-info/10', textClass: 'text-info' },
@@ -597,7 +663,12 @@ const testingToolInitialParams = ref<Record<string, unknown> | null>(null)
 const selectedCategory = ref('')
 const memoryDiagnostics = ref<DurableMemoryDiagnosticsItem[]>([])
 const memoryDiagnosticsLoading = ref(false)
-const memoryDiagnosticsOnlyIssues = ref(true)
+const memoryDiagnosticsOnlyIssues = ref(false)
+const editingMemoryItem = ref<DurableMemoryDiagnosticsItem | null>(null)
+const memoryEditText = ref('')
+const memoryEditTitle = ref('')
+const memoryEditKind = ref('')
+const memoryEditSaving = ref(false)
 const sourceFilter = computed(() => props.sourceFilter)
 const showContent = computed(() => props.showContent)
 const workflowCount = computed(() => props.workflowCount ?? 0)
@@ -883,16 +954,16 @@ async function copyMemoryId(memoryId: string) {
   }
 }
 
-function normalizeOriginExecutionId(record: DurableMemoryRecord): string {
+function normalizeOriginExecutionId(record: SharedDurableMemoryDiagnosticsItem['record']): string {
   return String(record.origin_execution_id || '').trim()
 }
 
-function canOpenOriginConversation(record: DurableMemoryRecord): boolean {
+function canOpenOriginConversation(record: SharedDurableMemoryDiagnosticsItem['record']): boolean {
   const executionId = normalizeOriginExecutionId(record)
   return !!executionId && executionId !== 'memory_tool'
 }
 
-function openOriginConversation(record: DurableMemoryRecord) {
+function openOriginConversation(record: SharedDurableMemoryDiagnosticsItem['record']) {
   const executionId = normalizeOriginExecutionId(record)
   if (!executionId || executionId === 'memory_tool') {
     dialog.toast.error('该 memory 没有可跳转的来源会话')
@@ -918,6 +989,72 @@ function clearFocusedMemory() {
   const nextQuery = { ...route.query }
   delete nextQuery.memoryId
   void router.replace({ query: nextQuery })
+}
+
+function openMemoryEdit(item: DurableMemoryDiagnosticsItem) {
+  editingMemoryItem.value = item
+  memoryEditText.value = item.record.text
+  memoryEditTitle.value = item.record.title || ''
+  memoryEditKind.value = item.record.kind
+}
+
+function closeMemoryEdit() {
+  editingMemoryItem.value = null
+}
+
+async function saveMemoryEdit() {
+  if (!editingMemoryItem.value) return
+  memoryEditSaving.value = true
+  try {
+    await updateDurableMemory({
+      memoryId: editingMemoryItem.value.record.id,
+      text: memoryEditText.value,
+      title: memoryEditTitle.value,
+      kind: memoryEditKind.value,
+    })
+    closeMemoryEdit()
+    await fetchMemoryDiagnostics()
+    dialog.toast.success('Memory 已更新')
+  } catch (error) {
+    await dialog.alert({
+      message: error instanceof Error ? error.message : String(error),
+      title: '更新失败',
+    })
+  } finally {
+    memoryEditSaving.value = false
+  }
+}
+
+async function toggleMemoryAutoInject(item: DurableMemoryDiagnosticsItem) {
+  const enabled = !memoryAutoInjectEnabled(item.record)
+  try {
+    await setDurableMemoryAutoInject(item.record.id, enabled)
+    await fetchMemoryDiagnostics()
+    dialog.toast.success(enabled ? '已启用自动注入' : '已禁用自动注入')
+  } catch (error) {
+    await dialog.alert({
+      message: error instanceof Error ? error.message : String(error),
+      title: '操作失败',
+    })
+  }
+}
+
+async function deleteMemoryRecord(item: DurableMemoryDiagnosticsItem) {
+  const confirmed = await dialog.confirm({
+    message: '确定删除这条 memory 吗？删除后将归档并移出检索索引。',
+    title: '删除 Memory',
+  })
+  if (!confirmed) return
+  try {
+    await deleteDurableMemory(item.record.id)
+    await fetchMemoryDiagnostics()
+    dialog.toast.success('Memory 已删除')
+  } catch (error) {
+    await dialog.alert({
+      message: error instanceof Error ? error.message : String(error),
+      title: '删除失败',
+    })
+  }
 }
 
 // 暴露刷新方法供父组件调用

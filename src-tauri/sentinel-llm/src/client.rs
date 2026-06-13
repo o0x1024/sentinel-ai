@@ -10,7 +10,10 @@ use serde_json::json;
 use tracing::{error, info};
 
 use crate::config::LlmConfig;
-use crate::log::{build_log_session_id, log_error_response, log_request_with_image, log_response};
+use crate::log::{
+    build_log_session_id, log_context_messages, log_error_response, log_request_with_image,
+    log_response,
+};
 use crate::message::{build_user_message, convert_chat_history, ChatMessage, ImageAttachment};
 
 /// 基础 LLM 客户端
@@ -164,7 +167,6 @@ impl LlmClient {
         }
         let preamble = &system_prompt_with_hack;
 
-        // 记录请求日志（含图片标记）
         log_request_with_image(
             &session_id,
             conversation_id,
@@ -175,7 +177,20 @@ impl LlmClient {
             image.is_some(),
         );
 
-        // 设置环境变量
+        if !history.is_empty() {
+            let context_pairs: Vec<(&str, &str)> = history
+                .iter()
+                .map(|m| (m.role.as_str(), m.content.as_str()))
+                .collect();
+            log_context_messages(
+                &session_id,
+                conversation_id,
+                &provider,
+                model,
+                &context_pairs,
+            );
+        }
+
         self.config.setup_env_vars();
 
         // 构建用户消息

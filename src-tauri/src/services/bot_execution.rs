@@ -352,7 +352,7 @@ pub async fn execute_bot_execution(
                     Some(response.clone()),
                     None,
                 );
-                return Ok(BotExecutionOutcome {
+                let outcome = BotExecutionOutcome {
                     run_id: run.id,
                     result: if harness_success.succeeded() {
                         Ok(response)
@@ -361,7 +361,9 @@ pub async fn execute_bot_execution(
                             "Bot execution finished without a complete task ledger".to_string()
                         }))
                     },
-                });
+                };
+                notify_observer_if_failed(app_handle, db, &outcome).await;
+                return Ok(outcome);
             }
             Err(error) => {
                 let error_text = error.to_string();
@@ -393,11 +395,28 @@ pub async fn execute_bot_execution(
                     None,
                     None,
                 );
-                return Ok(BotExecutionOutcome {
+                let outcome = BotExecutionOutcome {
                     run_id: run.id,
                     result: Err(error_text),
-                });
+                };
+                notify_observer_if_failed(app_handle, db, &outcome).await;
+                return Ok(outcome);
             }
         }
+    }
+}
+
+async fn notify_observer_if_failed(
+    app_handle: &AppHandle,
+    db: &Arc<DatabaseService>,
+    outcome: &BotExecutionOutcome,
+) {
+    if outcome.result.is_err() {
+        crate::services::observer_event_evaluator::evaluate_after_bot_execution(
+            app_handle,
+            db,
+            true,
+        )
+        .await;
     }
 }

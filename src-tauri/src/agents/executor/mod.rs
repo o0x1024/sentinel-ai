@@ -46,6 +46,7 @@ mod tool_feedback;
 mod tool_progress;
 mod tool_protocol;
 mod tool_search_override;
+mod tool_result_limits;
 pub mod tool_trace_store;
 mod traffic_response_read_tool;
 pub mod types;

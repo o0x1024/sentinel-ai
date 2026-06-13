@@ -18,7 +18,7 @@
             type="button"
             class="btn btn-ghost btn-xs mt-1 cursor-grab px-2 active:cursor-grabbing"
             tabindex="-1"
-            aria-label="拖拽排序"
+            :aria-label="$t('trafficAnalysis.codec.pipelineEditor.dragSort')"
           >
             <i class="fas fa-grip-lines text-base-content/40"></i>
           </button>
@@ -48,55 +48,55 @@
                   class="toggle toggle-sm toggle-primary"
                   @change="updateStep(index, { enabled: ($event.target as HTMLInputElement).checked })"
                 />
-                <span>启用</span>
+                <span>{{ $t('trafficAnalysis.codec.pipelineEditor.enabled') }}</span>
               </label>
             </div>
 
             <div v-if="isBase64Codec(step.codec)" class="grid gap-2 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-center">
-              <span class="text-sm text-base-content/70">变体</span>
+              <span class="text-sm text-base-content/70">{{ $t('trafficAnalysis.codec.pipelineEditor.variant') }}</span>
               <select
                 :value="getConfigValue(step, 'variant') || 'standard'"
                 class="select select-bordered select-sm"
                 @change="setConfigValue(index, 'variant', ($event.target as HTMLSelectElement).value)"
               >
-                <option value="standard">Standard</option>
-                <option value="url-safe">URL-Safe</option>
+                <option value="standard">{{ $t('trafficAnalysis.codec.pipelineEditor.standard') }}</option>
+                <option value="url-safe">{{ $t('trafficAnalysis.codec.pipelineEditor.urlSafe') }}</option>
               </select>
             </div>
 
             <div v-else-if="isAesCodec(step.codec)" class="space-y-2">
               <div class="grid gap-2 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-center">
-                <span class="text-sm text-base-content/70">密钥 (key)</span>
+                <span class="text-sm text-base-content/70">{{ $t('trafficAnalysis.codec.pipelineEditor.key') }}</span>
                 <input
                   :value="getConfigValue(step, 'key')"
                   type="text"
                   class="input input-bordered input-sm font-mono"
-                  placeholder="密钥"
+                  :placeholder="$t('trafficAnalysis.codec.pipelineEditor.keyPlaceholder')"
                   @input="setConfigValue(index, 'key', ($event.target as HTMLInputElement).value)"
                 />
               </div>
               <div class="grid gap-2 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-center">
-                <span class="text-sm text-base-content/70">密钥格式</span>
+                <span class="text-sm text-base-content/70">{{ $t('trafficAnalysis.codec.pipelineEditor.keyFormat') }}</span>
                 <select
                   :value="getConfigValue(step, 'key_format') || 'utf8'"
                   class="select select-bordered select-sm"
                   @change="setConfigValue(index, 'key_format', ($event.target as HTMLSelectElement).value)"
                 >
-                  <option value="hex">Hex</option>
-                  <option value="base64">Base64</option>
-                  <option value="utf8">UTF-8</option>
+                  <option value="hex">{{ $t('trafficAnalysis.codec.pipelineEditor.formatHex') }}</option>
+                  <option value="base64">{{ $t('trafficAnalysis.codec.pipelineEditor.formatBase64') }}</option>
+                  <option value="utf8">{{ $t('trafficAnalysis.codec.pipelineEditor.formatUtf8') }}</option>
                 </select>
               </div>
               <div
                 v-if="step.codec === 'aes-cbc'"
                 class="grid gap-2 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-center"
               >
-                <span class="text-sm text-base-content/70">IV</span>
+                <span class="text-sm text-base-content/70">{{ $t('trafficAnalysis.codec.pipelineEditor.iv') }}</span>
                 <input
                   :value="getConfigValue(step, 'iv')"
                   type="text"
                   class="input input-bordered input-sm font-mono"
-                  placeholder="初始化向量 (16 字节)"
+                  :placeholder="$t('trafficAnalysis.codec.pipelineEditor.ivPlaceholder')"
                   @input="setConfigValue(index, 'iv', ($event.target as HTMLInputElement).value)"
                 />
               </div>
@@ -104,27 +104,27 @@
                 v-if="step.codec === 'aes-cbc'"
                 class="grid gap-2 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-center"
               >
-                <span class="text-sm text-base-content/70">IV 格式</span>
+                <span class="text-sm text-base-content/70">{{ $t('trafficAnalysis.codec.pipelineEditor.ivFormat') }}</span>
                 <select
                   :value="getConfigValue(step, 'iv_format') || 'utf8'"
                   class="select select-bordered select-sm"
                   @change="setConfigValue(index, 'iv_format', ($event.target as HTMLSelectElement).value)"
                 >
-                  <option value="hex">Hex</option>
-                  <option value="base64">Base64</option>
-                  <option value="utf8">UTF-8</option>
+                  <option value="hex">{{ $t('trafficAnalysis.codec.pipelineEditor.formatHex') }}</option>
+                  <option value="base64">{{ $t('trafficAnalysis.codec.pipelineEditor.formatBase64') }}</option>
+                  <option value="utf8">{{ $t('trafficAnalysis.codec.pipelineEditor.formatUtf8') }}</option>
                 </select>
               </div>
-              <p class="text-xs text-base-content/55">填充方式：PKCS#7</p>
+              <p class="text-xs text-base-content/55">{{ $t('trafficAnalysis.codec.pipelineEditor.pkcs7Padding') }}</p>
             </div>
 
             <div v-else-if="step.codec === 'xor'" class="grid gap-2 sm:grid-cols-[8rem_minmax(0,1fr)] sm:items-center">
-              <span class="text-sm text-base-content/70">密钥 (key)</span>
+              <span class="text-sm text-base-content/70">{{ $t('trafficAnalysis.codec.pipelineEditor.key') }}</span>
               <input
                 :value="getConfigValue(step, 'key')"
                 type="text"
                 class="input input-bordered input-sm font-mono"
-                placeholder="XOR 密钥"
+                :placeholder="$t('trafficAnalysis.codec.pipelineEditor.xorKeyPlaceholder')"
                 @input="setConfigValue(index, 'key', ($event.target as HTMLInputElement).value)"
               />
             </div>
@@ -139,20 +139,20 @@
                   :value="entry.key"
                   type="text"
                   class="input input-bordered input-sm w-32 font-mono"
-                  placeholder="键"
+                  :placeholder="$t('trafficAnalysis.codec.pipelineEditor.configKey')"
                   @input="renameGenericConfigKey(index, entry.key, ($event.target as HTMLInputElement).value)"
                 />
                 <input
                   :value="entry.value"
                   type="text"
                   class="input input-bordered input-sm min-w-0 flex-1 font-mono"
-                  placeholder="值"
+                  :placeholder="$t('trafficAnalysis.codec.pipelineEditor.configValue')"
                   @input="setConfigValue(index, entry.key, ($event.target as HTMLInputElement).value)"
                 />
                 <button
                   type="button"
                   class="btn btn-ghost btn-xs"
-                  aria-label="删除配置项"
+                  :aria-label="$t('trafficAnalysis.codec.pipelineEditor.deleteConfigKey')"
                   @click="removeGenericConfigKey(index, entry.key)"
                 >
                   <i class="fas fa-times"></i>
@@ -160,19 +160,19 @@
               </div>
               <button type="button" class="btn btn-ghost btn-xs" @click="addGenericConfigEntry(index)">
                 <i class="fas fa-plus mr-1"></i>
-                添加配置项
+                {{ $t('trafficAnalysis.codec.pipelineEditor.addConfigEntry') }}
               </button>
             </div>
 
             <p v-else-if="hasNoConfig(step.codec)" class="text-xs text-base-content/55">
-              此编解码器无需额外配置
+              {{ $t('trafficAnalysis.codec.pipelineEditor.noConfig') }}
             </p>
           </div>
 
           <button
             type="button"
             class="btn btn-ghost btn-xs text-error"
-            aria-label="删除步骤"
+            :aria-label="$t('trafficAnalysis.codec.pipelineEditor.deleteStep')"
             @click="removeStep(index)"
           >
             <i class="fas fa-trash-alt"></i>
@@ -183,13 +183,14 @@
 
     <button type="button" class="btn btn-outline btn-sm" @click="addStep">
       <i class="fas fa-plus mr-1"></i>
-      添加步骤
+      {{ $t('trafficAnalysis.codec.pipelineEditor.addStep') }}
     </button>
   </div>
 </template>
 
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import { useI18n } from 'vue-i18n'
 import { BUILTIN_CODECS } from './trafficCodecTypes'
 import type { CodecStep } from './trafficCodecTypes'
 
@@ -201,19 +202,13 @@ const emit = defineEmits<{
   'update:modelValue': [steps: CodecStep[]]
 }>()
 
+const { t } = useI18n()
+
 const NO_CONFIG_CODECS = new Set(['gzip', 'deflate', 'hex', 'url'])
 const AES_CODECS = new Set(['aes-cbc', 'aes-ecb'])
 
 const dragStepId = ref<string | null>(null)
 const dragOverStepId = ref<string | null>(null)
-
-const categoryLabels: Record<string, string> = {
-  encoding: '编码',
-  symmetric: '对称加密',
-  asymmetric: '非对称加密',
-  compression: '压缩',
-  bitwise: '位运算',
-}
 
 const codecGroups = computed(() => {
   const groups = new Map<string, typeof BUILTIN_CODECS[number][]>()
@@ -224,7 +219,7 @@ const codecGroups = computed(() => {
   }
   return Array.from(groups.entries()).map(([category, items]) => ({
     category,
-    label: categoryLabels[category] ?? category,
+    label: t(`trafficAnalysis.codec.pipelineEditor.categories.${category}`),
     items,
   }))
 })

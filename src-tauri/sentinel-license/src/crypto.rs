@@ -7,7 +7,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 /// Embedded public key for license verification
-const EMBEDDED_PUBLIC_KEY: &str = "yzCNnuh1Mj0rXdWqvjvWRS6bxXp3Kw9GPu5gDDxrSsk=";
+const EMBEDDED_PUBLIC_KEY: &str = "RuRBGlvZWXg8KRdQUI6LqKk60yawV4CqXBPPQtHv5Cw=";
 
 #[derive(Error, Debug)]
 pub enum CryptoError {
@@ -130,23 +130,6 @@ pub fn verify_license(
 
     // Verify
     match public_key.verify(&message, &signature) {
-        Ok(_) => Ok(true),
-        Err(_) => Ok(false),
-    }
-}
-
-pub fn sign_detached_payload(payload: &[u8], signing_key: &SigningKey) -> String {
-    BASE64.encode(signing_key.sign(payload).to_bytes())
-}
-
-pub fn verify_detached_payload(
-    payload: &[u8],
-    signature_bytes: &[u8; 64],
-) -> Result<bool, CryptoError> {
-    let public_key = get_embedded_public_key()?;
-    let signature = Signature::from_bytes(signature_bytes);
-
-    match public_key.verify(payload, &signature) {
         Ok(_) => Ok(true),
         Err(_) => Ok(false),
     }

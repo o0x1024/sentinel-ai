@@ -369,7 +369,7 @@ const teamOrchestrationPresetOptions = TEAM_ORCHESTRATION_PRESET_METAS
 const teamRecoveryPresetOptions = TEAM_RECOVERY_PRESETS
 const canCreateProfiles = computed(() => entitlements.value.is_licensed)
 const profileCreationLockedTitle = computed(() =>
-  canCreateProfiles.value ? '' : '未激活版本只允许修改配置，创建 Profile 需要输入卡密激活。'
+  canCreateProfiles.value ? '' : '未激活版本只允许修改配置，创建 Profile 需要完成本地 License 激活。'
 )
 
 const loading = computed(
@@ -647,7 +647,7 @@ const queueAutoSave = () => {
 
 const createTeamProfile = () => {
   if (!canCreateProfiles.value) {
-    dialog.toast.warning('未激活版本只允许修改配置，创建 Profile 需要输入卡密激活。')
+    dialog.toast.warning('未激活版本只允许修改配置，创建 Profile 需要完成本地 License 激活。')
     return
   }
   const ids = new Set(draftTeamProfiles.value.map(profile => profile.id))
@@ -706,7 +706,7 @@ const createTeamProfile = () => {
 const createTeamWithAi = async () => {
   const description = aiTeamDescription.value.trim()
   if (!canCreateProfiles.value) {
-    dialog.toast.warning('未激活版本只允许修改配置，创建 Profile 需要输入卡密激活。')
+    dialog.toast.warning('未激活版本只允许修改配置，创建 Profile 需要完成本地 License 激活。')
     return
   }
   if (!description || isAiCreatingTeam.value) return

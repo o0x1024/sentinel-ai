@@ -10,6 +10,7 @@ pub mod observability;
 pub mod policy;
 pub mod reflection;
 pub mod sentinel;
+pub(crate) mod skill_protection;
 pub mod token_utils;
 pub mod tool_digest;
 pub mod types;
@@ -34,8 +35,8 @@ pub use checkpoint::{
 pub use engine::{resolve_context_policy, ContextEngineMode};
 pub use memory_index::{
     evict_low_value_items, ingest_memory_items, ingest_memory_items_persistent,
-    keyword_score_value, retrieve_memory_items, retrieve_memory_items_hybrid, MemoryQuery,
-    RetrievedMemoryItem,
+    keyword_score_value, retrieve_memory_items, retrieve_memory_items_hybrid,
+    retrieve_memory_unified, MemoryQuery, MemoryRetrievalResult, RetrievedMemoryItem,
 };
 pub use observability::{record_context_snapshot, ContextSnapshot};
 pub use policy::{ContextMessageLayout, ContextPolicy, ContextScope};

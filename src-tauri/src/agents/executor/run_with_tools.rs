@@ -3,7 +3,7 @@
 use anyhow::Result;
 use chrono::TimeZone;
 use serde_json::json;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::{AppHandle, Emitter};
 
 use sentinel_db::Database;
@@ -23,7 +23,8 @@ use super::run_with_tools_support::{
     is_empty_response_error, is_high_risk_tool_call, is_retryable_error,
     is_side_effectful_tool_call, looks_like_verification_tool_call, patch_builtin_dynamic_tools,
     persist_ai_message_with_retry, record_failed_agent_execution, register_skills_tool_guard,
-    settle_running_tool_messages_for_interrupted_turn, streaming_content_needs_evidence_review,
+    settle_running_tool_messages_for_interrupted_turn, load_enabled_skill_entries,
+    streaming_content_needs_evidence_review, SkillsParentExecutionScope,
     tool_loop_fingerprint, trailing_failed_tool_calls,
 };
 use super::{AgentExecuteParams, AgentTurnOutcome, ToolProtocolTracker};
@@ -35,7 +36,6 @@ use crate::agents::executor::message_store::{
     build_assistant_session_stats_metadata, mark_first_response_ms,
     persist_subagent_message_with_retry, save_assistant_message,
 };
-use crate::agents::executor::skill_loaded_events::emit_and_persist_skill_loaded;
 use crate::agents::executor::team_runtime_log_context::{
     is_toolset_error_result, log_toolset_error_with_context, resolve_team_runtime_log_context,
 };
@@ -61,9 +61,94 @@ use crate::agents::{
     build_context, build_tool_digest, load_run_state, resolve_context_policy, ContextBuildInput,
     TrackedArtifact,
 };
-use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
+use crate::agents::skills_injection::{
+    inject_skills_catalog, SkillCatalogState,
+};
+use crate::agents::skill_context_modifier::apply_allowed_tools;
+use crate::agents::executor::model_context_tool::{
+    new_skill_injection_sink, PendingSkillInjection, SkillInjectionSink,
+};
+use sentinel_tools::buildin_tools::SkillsTool;
 
 type PendingToolCalls = std::collections::HashMap<String, (String, String, i64, u32)>;
+
+use crate::utils::ai_generation_settings::apply_generation_settings_from_db;
+
+/// Inject skill catalog with dedup state (Claude Code `skill_listing` pattern).
+async fn inject_skills_catalog_at_turn_start(
+    history: &mut Vec<ChatMessage>,
+    db: &sentinel_db::DatabaseService,
+    task: &str,
+    skills_enabled: bool,
+) {
+    if !skills_enabled {
+        return;
+    }
+    let entries = load_enabled_skill_entries(db).await;
+    let mut catalog_state = SkillCatalogState::default();
+    inject_skills_catalog(
+        history,
+        &entries,
+        &mut catalog_state,
+        Some(task),
+        Some(200_000),
+    );
+}
+
+/// Drain pending skill metadata from invoke results and apply executor-side overrides.
+fn drain_pending_skill_metadata(sink: &SkillInjectionSink) -> Vec<PendingSkillInjection> {
+    sink.lock()
+        .map(|mut guard| std::mem::take(&mut *guard))
+        .unwrap_or_default()
+}
+
+async fn apply_pending_skill_metadata(
+    sink: &SkillInjectionSink,
+    invoked_skills: &Arc<Mutex<Vec<PendingSkillInjection>>>,
+    current_tool_ids: &mut Vec<String>,
+    tool_config: &crate::agents::tool_router::ToolConfig,
+    tool_server: &ToolServer,
+    skill_model_override: &Arc<Mutex<Option<String>>>,
+) {
+    let pending = drain_pending_skill_metadata(sink);
+    if pending.is_empty() {
+        return;
+    }
+
+    let available_tool_ids: Vec<String> = tool_server
+        .list_tools()
+        .await
+        .into_iter()
+        .map(|info| info.name)
+        .collect();
+
+    for inj in &pending {
+        if !inj.allowed_tools.is_empty() {
+            apply_allowed_tools(
+                current_tool_ids,
+                tool_config,
+                &inj.allowed_tools,
+                &available_tool_ids,
+            );
+        }
+        if let Some(model) = inj.model_override.as_deref() {
+            if let Ok(mut slot) = skill_model_override.lock() {
+                *slot = Some(model.to_string());
+            }
+        }
+        if inj.effort.is_some() {
+            tracing::info!(
+                "Skill '{}' requested effort override {:?} (not yet applied)",
+                inj.skill_name,
+                inj.effort
+            );
+        }
+    }
+
+    if let Ok(mut tracked) = invoked_skills.lock() {
+        tracked.extend(pending);
+    }
+}
 
 pub async fn execute_agent_with_tools(
     app_handle: &AppHandle,
@@ -80,6 +165,7 @@ pub async fn execute_agent_with_tools(
         &params.execution_id,
         params.active_terminal_session_id.as_deref(),
     );
+    let _skills_execution_scope = SkillsParentExecutionScope::new(params.execution_id.clone());
     let tool_config = params.tool_config.clone().unwrap_or_default();
     let tenth_man_trigger_policy: TenthManTriggerPolicy = params
         .tenth_man_config
@@ -157,6 +243,9 @@ pub async fn execute_agent_with_tools(
         params.context_policy.clone(),
         params.context_engine_mode.unwrap_or_default(),
     );
+    // Skill catalog moves out of system prompt into conversation history.
+    let skills_tool_enabled = selected_tool_ids.iter().any(|id| id == SkillsTool::NAME);
+
     let context_result = build_context(ContextBuildInput {
         app_handle: app_handle.clone(),
         execution_id: params.execution_id.clone(),
@@ -168,7 +257,7 @@ pub async fn execute_agent_with_tools(
         active_terminal_session_id: params.active_terminal_session_id.clone(),
         working_directory: params.working_directory.clone(),
         base_system_prompt: params.system_prompt.clone(),
-        injected_skill_prompt: selection_plan.injected_system_prompt.clone(),
+        injected_skill_prompt: None,
         injected_runtime_context: selection_plan.injected_runtime_context.clone(),
         task: params.task.clone(),
         provider_config_key: params.provider_config_key.clone(),
@@ -193,7 +282,6 @@ pub async fn execute_agent_with_tools(
 
     let image_attachments = parse_images_from_json(params.image_attachments.as_ref());
 
-    let client = StreamingLlmClient::new(llm_config.clone());
     let execution_id = params.execution_id.clone();
     let cancellation_generation = params.cancellation_generation;
     let team_log_context =
@@ -300,6 +388,19 @@ pub async fn execute_agent_with_tools(
     // 累积的助手输出（跨重试保留）
     let accumulated_assistant_output: Arc<Mutex<String>> = Arc::new(Mutex::new(String::new()));
     let mut base_history_messages = history_chat_messages.clone();
+    inject_skills_catalog_at_turn_start(
+        &mut base_history_messages,
+        db_service.inner(),
+        &params.task,
+        skills_tool_enabled,
+    )
+    .await;
+
+    // Sink for skill metadata extracted from inline `skills` invoke tool results.
+    let skill_injection_sink = new_skill_injection_sink();
+    // Tracks all skills invoked during this execution for compaction re-injection.
+    let invoked_skills: Arc<Mutex<Vec<PendingSkillInjection>>> = Arc::new(Mutex::new(Vec::new()));
+    let skill_model_override: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
 
     let tool_activation_reload_requested = Arc::new(AtomicBool::new(false));
     let activated_tool_ids: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
@@ -339,6 +440,7 @@ pub async fn execute_agent_with_tools(
             params.active_terminal_session_id.as_deref(),
             params.working_directory.as_deref(),
             referenced_traffic,
+            Some(skill_injection_sink.clone()),
         )
         .await;
 
@@ -439,7 +541,7 @@ pub async fn execute_agent_with_tools(
                 history_for_retry: &mut history_for_retry,
                 compaction_attempted,
                 force_compaction: force_context_compaction,
-                injected_skill_prompt: &selection_plan.injected_system_prompt,
+                injected_skill_prompt: &None,
                 rig_provider: &rig_provider,
                 llm_config: &llm_config,
                 current_tool_ids: &current_tool_ids,
@@ -453,9 +555,35 @@ pub async fn execute_agent_with_tools(
             .await?;
         if compaction_outcome.compacted {
             force_history_with_tools = false;
+            // Re-inject previously invoked skills after compaction so the model retains
+            // their instructions (Claude Code `invoked_skills` attachment pattern).
+            if let Ok(tracked) = invoked_skills.lock() {
+                if !tracked.is_empty() {
+                    let skills_for_compaction: Vec<(String, String, String)> = tracked
+                        .iter()
+                        .map(|s| (s.skill_id.clone(), s.skill_name.clone(), s.body.clone()))
+                        .collect();
+                    let reminder =
+                        crate::agents::skills_injection::format_invoked_skills_for_compaction(
+                            &skills_for_compaction,
+                        );
+                    tracing::info!(
+                        "Re-injecting {} invoked skill(s) after context compaction",
+                        tracked.len()
+                    );
+                    base_history_messages.push(ChatMessage::user(reminder));
+                }
+            }
         }
         let _latest_context_pressure = compaction_outcome.pressure.analysis.pressure;
         reactive_context_compaction_requested = false;
+        let mut effective_llm_config = llm_config.clone();
+        if let Ok(guard) = skill_model_override.lock() {
+            if let Some(model) = guard.as_deref() {
+                effective_llm_config.model = model.to_string();
+            }
+        }
+        let client = StreamingLlmClient::new(effective_llm_config);
         let result = client
             .stream_chat_with_dynamic_tools(
                 final_system_prompt_content.as_deref(),
@@ -949,7 +1077,17 @@ pub async fn execute_agent_with_tools(
                                     let duration_ms = completed_at_ms.saturating_sub(started_at_ms);
                                     let name_for_meta = name.clone();
                                     let args_for_meta = arguments.clone();
-                                    let tool_success = infer_tool_result_success(&result);
+                                    let skills_payload = if name_for_meta == "skills" {
+                                        sentinel_tools::parse_tool_result_payload(&result)
+                                    } else {
+                                        None
+                                    };
+                                    let tool_success = skills_payload
+                                        .as_ref()
+                                        .and_then(|payload| {
+                                            sentinel_tools::skills_tool_success_from_value(payload)
+                                        })
+                                        .unwrap_or_else(|| infer_tool_result_success(&result));
                                     sentinel_llm::log::log_tool_result(
                                         &execution_id,
                                         Some(&storage_conversation_id),
@@ -1008,7 +1146,7 @@ pub async fn execute_agent_with_tools(
                                         &name_for_meta,
                                         &args_for_meta,
                                     );
-                                    let meta = json!({
+                                    let mut meta = json!({
                                         "kind": "tool_call",
                                         "tool_name": name_for_meta,
                                         "tool_args": tool_args_val,
@@ -1021,6 +1159,14 @@ pub async fn execute_agent_with_tools(
                                         "tool_result": result,
                                         "success": tool_success,
                                     });
+                                    if let Some(payload) = skills_payload.as_ref() {
+                                        if let Some(files) = payload.get("referenced_files") {
+                                            meta["referenced_files"] = files.clone();
+                                        }
+                                        if let Some(warnings) = payload.get("warnings") {
+                                            meta["skill_warnings"] = warnings.clone();
+                                        }
+                                    }
                                     if let Some(db) = db_for_stream.clone() {
                                         use sentinel_core::models::database as core_db;
                                         let tool_msg = core_db::AiMessage {
@@ -1074,34 +1220,6 @@ pub async fn execute_agent_with_tools(
                                         });
                                     }
 
-                                    if name_for_meta == "skills" {
-                                        if let Ok(args_json) =
-                                            serde_json::from_str::<serde_json::Value>(&args_for_meta)
-                                        {
-                                            if args_json
-                                                .get("action")
-                                                .and_then(|v| v.as_str())
-                                                .map(|a| a == "load")
-                                                .unwrap_or(false)
-                                            {
-                                                if let Some(skill_id) = args_json
-                                                    .get("skill_id")
-                                                    .and_then(|v| v.as_str())
-                                                {
-                                                    emit_and_persist_skill_loaded(
-                                                        &app,
-                                                        &execution_id,
-                                                        &storage_conversation_id,
-                                                        cancellation_generation,
-                                                        skill_id,
-                                                        skill_id,
-                                                        db_for_stream.clone(),
-                                                    );
-                                                }
-                                            }
-                                        }
-                                    }
-
                                     if name_for_meta == ToolSearchTool::NAME {
                                         let result_json =
                                             serde_json::from_str::<serde_json::Value>(&result)
@@ -1150,6 +1268,81 @@ pub async fn execute_agent_with_tools(
                                                 }
                                                 tool_activation_reload_requested
                                                     .store(true, Ordering::SeqCst);
+                                            }
+                                        }
+                                    }
+
+                                    // When the model calls `skills invoke/fork`, emit
+                                    // UI events. `read_file` is a lightweight helper-file
+                                    // read and does not trigger skill_loaded.
+                                    if name_for_meta == "skills" {
+                                        if let Some(result_json) = skills_payload {
+                                            let action = result_json
+                                                .get("action")
+                                                .and_then(|value| value.as_str())
+                                                .unwrap_or_default();
+                                            let extract_skill_field = |field: &str| -> String {
+                                                result_json
+                                                    .get("skill")
+                                                    .and_then(|skill| skill.get(field))
+                                                    .and_then(|value| value.as_str())
+                                                    .unwrap_or_default()
+                                                    .to_string()
+                                            };
+                                            if action == "fork" {
+                                                let skill_id = extract_skill_field("id");
+                                                let skill_name_val = extract_skill_field("name");
+                                                let skill_name = if skill_name_val.is_empty() { &skill_id } else { &skill_name_val };
+                                                let referenced_files = result_json
+                                                    .get("referenced_files")
+                                                    .and_then(|value| value.as_array())
+                                                    .map(|items| {
+                                                        items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect::<Vec<_>>()
+                                                    })
+                                                    .unwrap_or_default();
+                                                let result_preview = result_json
+                                                    .get("content")
+                                                    .and_then(|value| value.as_str())
+                                                    .unwrap_or_default()
+                                                    .chars()
+                                                    .take(500)
+                                                    .collect::<String>();
+                                                crate::agents::executor::skill_loaded_events::emit_and_persist_skill_forked(
+                                                    app_handle,
+                                                    &params.execution_id,
+                                                    &storage_conversation_id,
+                                                    params.cancellation_generation,
+                                                    &skill_id,
+                                                    skill_name,
+                                                    &referenced_files,
+                                                    &result_preview,
+                                                    db_for_stream.clone(),
+                                                );
+                                            } else if action == "invoke" {
+                                                let skill_id = extract_skill_field("id");
+                                                let skill_name_val = extract_skill_field("name");
+                                                let skill_name = if skill_name_val.is_empty() { &skill_id } else { &skill_name_val };
+                                                let referenced_files = result_json
+                                                    .get("referenced_files")
+                                                    .and_then(|value| value.as_array())
+                                                    .map(|items| {
+                                                        items.iter().filter_map(|item| item.as_str().map(str::to_string)).collect::<Vec<_>>()
+                                                    })
+                                                    .unwrap_or_default();
+                                                let skill_content = result_json
+                                                    .get("content")
+                                                    .and_then(|value| value.as_str());
+                                                crate::agents::executor::skill_loaded_events::emit_and_persist_skill_loaded(
+                                                    app_handle,
+                                                    &params.execution_id,
+                                                    &storage_conversation_id,
+                                                    params.cancellation_generation,
+                                                    &skill_id,
+                                                    skill_name,
+                                                    &referenced_files,
+                                                    skill_content,
+                                                    db_for_stream.clone(),
+                                                );
                                             }
                                         }
                                     }
@@ -1538,6 +1731,16 @@ pub async fn execute_agent_with_tools(
                 continue;
             }
         }
+
+        apply_pending_skill_metadata(
+            &skill_injection_sink,
+            &invoked_skills,
+            &mut current_tool_ids,
+            &tool_config,
+            tool_server,
+            &skill_model_override,
+        )
+        .await;
 
         if loop_break_requested.load(Ordering::SeqCst) {
             loop_break_requested.store(false, Ordering::SeqCst);

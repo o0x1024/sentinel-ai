@@ -9,7 +9,7 @@
 
     <div v-if="!isBugBountyActivated" class="alert alert-warning flex-shrink-0">
       <i class="fas fa-lock"></i>
-      <span>当前未完成服务端激活，漏洞赏金可预览数据和界面，创建、导入、删除、监控执行等操作会被限制。</span>
+      <span>当前未完成本地 License 激活，漏洞赏金可预览数据和界面，创建、导入、删除、监控执行等操作会被限制。</span>
     </div>
 
     <!-- Statistics Cards -->

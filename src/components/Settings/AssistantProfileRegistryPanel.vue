@@ -419,7 +419,7 @@ let autoSaveTimer: ReturnType<typeof setTimeout> | null = null
 
 const canCreateProfiles = computed(() => entitlements.value.is_licensed)
 const profileCreationLockedTitle = computed(() =>
-  canCreateProfiles.value ? '' : '未激活版本只允许修改配置，创建 Profile 需要输入卡密激活。'
+  canCreateProfiles.value ? '' : '未激活版本只允许修改配置，创建 Profile 需要完成本地 License 激活。'
 )
 
 const normalizeProviderName = (provider: string) => {
@@ -893,7 +893,7 @@ const queueAutoSave = () => {
 
 const createProfile = () => {
   if (!canCreateProfiles.value) {
-    dialog.toast.warning('未激活版本只允许修改配置，创建 Profile 需要输入卡密激活。')
+    dialog.toast.warning('未激活版本只允许修改配置，创建 Profile 需要完成本地 License 激活。')
     return
   }
   const { id, nextIndex } = createNextProfileIdentity(draftProfiles.value)
@@ -927,7 +927,7 @@ const createProfile = () => {
 const createProfileWithAi = async () => {
   const description = aiAgentDescription.value.trim()
   if (!canCreateProfiles.value) {
-    dialog.toast.warning('未激活版本只允许修改配置，创建 Profile 需要输入卡密激活。')
+    dialog.toast.warning('未激活版本只允许修改配置，创建 Profile 需要完成本地 License 激活。')
     return
   }
   if (!description || isAiCreatingAgent.value) return

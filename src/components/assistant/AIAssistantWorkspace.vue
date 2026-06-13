@@ -139,6 +139,7 @@ import { pickLatestConversation } from '@/components/Agent/agentConversationSess
 import { buildFocusedMessageQuery, readFocusLocationState } from '@/components/Agent/focusLocationSupport'
 import { isAssistantPresentationTarget, type AssistantPresentationTarget } from '@/services/assistantPresentation'
 import { consumePendingSecurityFindingAssistantAssets } from '@/components/SecurityCenter/securityFindingAssistantTransfer'
+import { consumePendingSurfaceAssistantAssets } from '@/components/BugBounty/surfaceAssetUtils'
 
 type PendingTrafficReference = {
   requests: ReferencedTraffic[]
@@ -280,6 +281,13 @@ function queueAssetReferences(assets: ReferencedAsset[]) {
 
 function drainPendingSecurityFindingReferences() {
   const assets = consumePendingSecurityFindingAssistantAssets()
+  if (assets.length > 0) {
+    queueAssetReferences(assets)
+  }
+}
+
+function drainPendingSurfaceAssetReferences() {
+  const assets = consumePendingSurfaceAssistantAssets()
   if (assets.length > 0) {
     queueAssetReferences(assets)
   }
@@ -490,6 +498,7 @@ onMounted(async () => {
     })
 
     drainPendingSecurityFindingReferences()
+    drainPendingSurfaceAssetReferences()
   } catch (error) {
     console.error('Failed to initialize AI Assistant:', error)
   } finally {
@@ -516,6 +525,7 @@ onUnmounted(() => {
 onActivated(() => {
   if (props.active) {
     drainPendingSecurityFindingReferences()
+    drainPendingSurfaceAssetReferences()
     void focusActiveAgentInput()
   }
 })
@@ -525,6 +535,7 @@ watch(
   (active) => {
     if (active) {
       drainPendingSecurityFindingReferences()
+      drainPendingSurfaceAssetReferences()
       void focusActiveAgentInput()
       return
     }

@@ -14,7 +14,8 @@ export function buildTrafficCodecContextSubmenu(options: {
     ...options.matchedRules.map(rule => ({
       key: `codec-rule-${rule.id}`,
       iconClass: rule.enabled ? 'fas fa-toggle-on text-success' : 'fas fa-toggle-off text-base-content/50',
-      labelKey: rule.name,
+      labelKey: 'matchedRule',
+      labelText: rule.name,
       onClick: () => options.onToggleRule(rule.id),
     })),
     {

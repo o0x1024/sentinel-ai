@@ -14,6 +14,7 @@
 
 <script setup lang="ts">
 import { computed } from 'vue'
+import { useI18n } from 'vue-i18n'
 
 const props = defineProps<{
   active: boolean
@@ -22,11 +23,13 @@ const props = defineProps<{
 }>()
 defineEmits<{ toggle: [] }>()
 
+const { t } = useI18n()
+
 const tooltipText = computed(() => {
   if (!props.active) return ''
   const names = props.ruleNames?.join(', ') ?? ''
   return props.codecViewEnabled
-    ? `已解密显示 (${names})`
-    : '点击切换为解密视图'
+    ? t('trafficAnalysis.codec.badge.toggleDecodeWithRules', { names })
+    : t('trafficAnalysis.codec.badge.toggleDecode')
 })
 </script>

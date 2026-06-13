@@ -1,4 +1,7 @@
 use super::*;
+use crate::agents::executor::tool_result_limits::{
+    TOOL_RESULT_COMPACT_SLACK_CHARS, TOOL_RESULT_MAX_CHARS, TOOL_RESULT_PLAIN_PREVIEW_CHARS,
+};
 use crate::agents::{ToolConfig, ToolSelectionStrategy};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -87,8 +90,24 @@ fn infer_tool_result_success_prefers_http_shape_over_generic_error_field() {
 }
 
 #[test]
+fn infer_tool_result_success_treats_skills_invoke_payload_as_success() {
+    let inner = serde_json::json!({
+        "action": "invoke",
+        "content": format!(
+            "Skill loaded: penetration-tester\n\n<skill>\n<name>penetration-tester</name>\n{}",
+            "timed out error failed ".repeat(20)
+        ),
+    });
+    let wrapped = serde_json::json!([{
+        "type": "text",
+        "text": inner.to_string(),
+    }]);
+    assert!(infer_tool_result_success(&wrapped.to_string()));
+}
+
+#[test]
 fn build_retry_history_compacts_large_json_tool_results() {
-    let large_body = "line\n".repeat(4_000);
+    let large_body = "line\n".repeat(11_000);
     let raw_result = serde_json::json!({
         "command": "cat huge.log",
         "stdout": large_body,
@@ -121,7 +140,10 @@ fn build_retry_history_compacts_large_json_tool_results() {
 
     assert!(tool_message.content.contains("_context_microcompact"));
     assert!(tool_message.content.contains("cat huge.log"));
-    assert!(tool_message.content.len() < 13_000);
+    assert!(
+        tool_message.content.chars().count()
+            <= TOOL_RESULT_MAX_CHARS + TOOL_RESULT_COMPACT_SLACK_CHARS
+    );
 }
 
 #[test]
@@ -159,7 +181,7 @@ fn accumulate_retry_progress_compacts_large_tool_results_once() {
         id: "tool-1".to_string(),
         name: "shell".to_string(),
         arguments: r#"{"command":"cat huge.log"}"#.to_string(),
-        result: Some("line\n".repeat(4_000)),
+        result: Some("line\n".repeat(11_000)),
         success: true,
         sequence: 0,
         started_at_ms: 0,
@@ -174,7 +196,9 @@ fn accumulate_retry_progress_compacts_large_tool_results_once() {
 
     let result = accumulated.lock().unwrap()[0].result.clone().unwrap();
     assert!(result.contains("context_microcompact"));
-    assert!(result.len() < 13_000);
+    assert!(
+        result.chars().count() <= TOOL_RESULT_PLAIN_PREVIEW_CHARS + TOOL_RESULT_COMPACT_SLACK_CHARS
+    );
 }
 
 #[test]

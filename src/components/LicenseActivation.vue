@@ -5,33 +5,17 @@ import {
   refreshFeatureEntitlements,
   useFeatureEntitlementsState,
 } from '../services/featureEntitlements'
-import {
-  refreshFeatureAccessStatus,
-  useFeatureAccessStatusState,
-} from '../services/featureAccessStatus'
-import {
-  activateWithLicenseCard,
-  refreshEntitlementTokenFromServer,
-} from '../services/entitlementRefresh'
-import { getFeatureAccessIssueMessage } from '../services/featureAccessMessaging'
 import { buildLicenseActivationViewState } from '../services/licenseActivationViewState'
-import {
-  formatDurationLabel,
-  getEntitlementRefreshCooldownSeconds,
-  markEntitlementRefreshFailure,
-  markEntitlementRefreshSuccess,
-  useEntitlementRefreshRuntimeState,
-} from '../services/entitlementRefreshState'
 
 interface LicenseInfo {
   machine_id: string
   is_licensed: boolean
   needs_activation: boolean
-  trial_active: boolean
-  trial_started_at: number | null
-  trial_expires_at: number | null
-  trial_remaining_seconds: number | null
-  trial_days_remaining: number | null
+}
+
+interface ActivationResult {
+  success: boolean
+  message: string
 }
 
 const emit = defineEmits<{
@@ -39,19 +23,12 @@ const emit = defineEmits<{
 }>()
 
 const entitlements = useFeatureEntitlementsState()
-const featureAccessStatus = useFeatureAccessStatusState()
-const entitlementRefreshRuntime = useEntitlementRefreshRuntimeState()
 const licenseInfo = ref<LicenseInfo | null>(null)
 const loading = ref(false)
-const accessSyncLoading = ref(false)
 const error = ref('')
-const accessSyncError = ref('')
-const accessSyncMessage = ref('')
 const copied = ref(false)
-const activationUsername = ref('')
-const activationKey = ref('')
+const licenseKey = ref('')
 const dialogOpen = ref(false)
-const featureAccessToolsOpen = ref(false)
 const upgradeToolbarRef = ref<HTMLElement | null>(null)
 const upgradeToolbarPosition = ref<{ x: number; y: number } | null>(null)
 const upgradeToolbarDrag = ref<{
@@ -65,27 +42,17 @@ const upgradeToolbarDrag = ref<{
 const UPGRADE_TOOLBAR_POSITION_KEY = 'sentinel.license-upgrade-toolbar-position'
 const UPGRADE_TOOLBAR_MARGIN = 12
 
-const isTrialAccess = computed(() => entitlements.value.access_source === 'trial' || entitlements.value.trial_active || Boolean(licenseInfo.value?.trial_active))
 const hasLocalLicense = computed(() => (
   entitlements.value.has_local_license
-  || (Boolean(licenseInfo.value?.is_licensed) && !isTrialAccess.value)
+  || Boolean(licenseInfo.value?.is_licensed)
 ))
 const hasFullAccess = computed(() => entitlements.value.is_licensed)
 const isDebugAccess = computed(() => entitlements.value.access_source === 'debug')
 const showUpgradeEntry = computed(() => !hasFullAccess.value)
-const refreshServiceConfigured = computed(() => true)
 const activationView = computed(() => buildLicenseActivationViewState({
   hasLocalLicense: hasLocalLicense.value,
   isDebugAccess: isDebugAccess.value,
-  isTrialAccess: isTrialAccess.value,
-  trialExpiresAt: entitlements.value.trial_expires_at ?? licenseInfo.value?.trial_expires_at ?? null,
-  trialDaysRemaining: entitlements.value.trial_days_remaining ?? licenseInfo.value?.trial_days_remaining ?? null,
-  featureAccessStatus: featureAccessStatus.value,
-  refreshServiceConfigured: refreshServiceConfigured.value,
-  refreshRuntime: entitlementRefreshRuntime.value,
-  refreshCooldownSeconds: getEntitlementRefreshCooldownSeconds(),
   formatTimestamp,
-  formatDuration: formatDurationLabel,
 }))
 const activateButtonLabel = computed(() => (loading.value ? '激活中...' : '激活'))
 const upgradeToolbarStyle = computed(() => {
@@ -124,18 +91,14 @@ async function checkLicenseStatus() {
   }
 }
 
-async function checkFeatureAccessStatus() {
-  await refreshFeatureAccessStatus()
-}
-
 async function refreshAllStatus() {
   await refreshFeatureEntitlements()
-  await Promise.all([checkLicenseStatus(), checkFeatureAccessStatus()])
+  await checkLicenseStatus()
 }
 
 async function activateLicense() {
-  if (!activationUsername.value.trim() || !activationKey.value.trim()) {
-    error.value = '请输入用户名和激活密钥'
+  if (!licenseKey.value.trim()) {
+    error.value = '请输入 License'
     return
   }
 
@@ -143,27 +106,17 @@ async function activateLicense() {
   error.value = ''
 
   try {
-    const result = await activateWithLicenseCard({
-      username: activationUsername.value.trim(),
-      activation_key: activationKey.value.trim(),
+    const result = await invoke<ActivationResult>('activate_license', {
+      licenseKey: licenseKey.value.trim(),
     })
 
     if (result.success) {
       error.value = ''
-      accessSyncError.value = ''
-      accessSyncMessage.value = result.message
-      markEntitlementRefreshSuccess()
+      licenseKey.value = ''
       await refreshAllStatus()
       emit('activated')
       dialogOpen.value = false
     } else {
-      if (result.configured) {
-        markEntitlementRefreshFailure({
-          message: result.message,
-          errorCode: result.error_code,
-          retryAfterSecs: result.retry_after_secs,
-        })
-      }
       error.value = result.message
       await refreshAllStatus()
     }
@@ -188,40 +141,7 @@ async function copyMachineId() {
   }
 }
 
-async function refreshFeatureAccessFromServer() {
-  accessSyncLoading.value = true
-  accessSyncError.value = ''
-  accessSyncMessage.value = ''
-
-  try {
-    const result = await refreshEntitlementTokenFromServer()
-    if (result.success) {
-      markEntitlementRefreshSuccess()
-      accessSyncMessage.value = result.message
-      await refreshAllStatus()
-    } else {
-      markEntitlementRefreshFailure({
-        message: result.message,
-        errorCode: result.error_code,
-        retryAfterSecs: result.retry_after_secs,
-      })
-      accessSyncError.value = result.message
-      await refreshAllStatus()
-    }
-  } catch (e) {
-    markEntitlementRefreshFailure({
-      message: String(e),
-      errorCode: 'manual_refresh_exception',
-      retryAfterSecs: 300,
-    })
-    accessSyncError.value = String(e)
-  } finally {
-    accessSyncLoading.value = false
-  }
-}
-
 function openDialog() {
-  featureAccessToolsOpen.value = hasLocalLicense.value
   dialogOpen.value = true
 }
 
@@ -278,7 +198,7 @@ function loadUpgradeToolbarPosition() {
     if (typeof parsed?.x === 'number' && typeof parsed?.y === 'number') {
       upgradeToolbarPosition.value = clampUpgradeToolbarPosition(parsed)
     }
-  } catch (error) {
+  } catch {
     window.localStorage.removeItem(UPGRADE_TOOLBAR_POSITION_KEY)
   }
 }
@@ -365,10 +285,10 @@ defineExpose({
             </button>
           </div>
 
-            <div class="text-center mb-6">
-              <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
-                <i class="fas fa-key text-3xl text-primary"></i>
-              </div>
+          <div class="text-center mb-6">
+            <div class="w-16 h-16 mx-auto mb-4 rounded-full bg-primary/10 flex items-center justify-center">
+              <i class="fas fa-key text-3xl text-primary"></i>
+            </div>
             <h2 class="card-title justify-center text-2xl">{{ activationView.dialogTitle }}</h2>
             <p class="text-base-content/60 mt-2">{{ activationView.dialogSubtitle }}</p>
           </div>
@@ -376,36 +296,6 @@ defineExpose({
           <div class="alert mb-4" :class="activationView.featureAccessTone">
             <i class="fas fa-shield-alt"></i>
             <span>{{ activationView.featureAccessText }}</span>
-          </div>
-
-          <div class="form-control mb-4">
-            <label class="label">
-              <span class="label-text font-medium">用户名</span>
-            </label>
-            <input
-              v-model="activationUsername"
-              type="text"
-              class="input input-bordered"
-              placeholder="输入管理员分配的用户名"
-              autocomplete="username"
-            />
-          </div>
-
-          <div class="form-control mb-4">
-            <label class="label">
-              <span class="label-text font-medium">激活密钥</span>
-            </label>
-            <input
-              v-model="activationKey"
-              type="password"
-              class="input input-bordered font-mono"
-              placeholder="输入管理员分配的卡密"
-              autocomplete="one-time-code"
-              @keyup.enter="activateLicense"
-            />
-            <label class="label">
-              <span class="label-text-alt text-base-content/50">激活成功后会自动绑定当前设备，后续无需重复输入。</span>
-            </label>
           </div>
 
           <div class="form-control mb-4">
@@ -428,8 +318,29 @@ defineExpose({
               </button>
             </div>
             <label class="label">
-              <span class="label-text-alt text-base-content/50">仅用于设备绑定和设备数限制。</span>
+              <span class="label-text-alt text-base-content/50">复制设备 ID 给管理员签发 License。</span>
             </label>
+          </div>
+
+          <div v-if="!hasLocalLicense" class="form-control mb-4">
+            <label class="label">
+              <span class="label-text font-medium">License</span>
+            </label>
+            <textarea
+              v-model="licenseKey"
+              class="textarea textarea-bordered font-mono min-h-28"
+              placeholder="粘贴管理员签发的 License"
+            />
+            <label class="label">
+              <span class="label-text-alt text-base-content/50">License 与当前设备绑定，激活后保存在本地，无需联网续期。</span>
+            </label>
+          </div>
+
+          <div v-else class="rounded-2xl border border-base-300 bg-base-200/50 p-4 mb-4">
+            <h3 class="text-lg font-semibold">当前授权</h3>
+            <p class="text-sm text-base-content/70 mt-2">
+              {{ activationView.featureAccessSummary }}
+            </p>
           </div>
 
           <div v-if="error" class="alert alert-error mb-4">
@@ -437,100 +348,17 @@ defineExpose({
             <span>{{ error }}</span>
           </div>
 
-          <div class="card-actions justify-center">
+          <div v-if="!hasLocalLicense" class="card-actions justify-center">
             <button
               class="btn btn-primary btn-wide"
               :class="{ 'loading': loading }"
-              :disabled="loading || !activationUsername.trim() || !activationKey.trim()"
+              :disabled="loading || !licenseKey.trim()"
               @click="activateLicense"
             >
               <i v-if="!loading" class="fas fa-unlock mr-2"></i>
               {{ activateButtonLabel }}
             </button>
           </div>
-
-          <template v-if="hasLocalLicense">
-            <div class="divider my-6">服务端授权</div>
-
-            <div class="rounded-2xl border border-base-300 bg-base-200/50 p-4">
-              <div class="flex items-start justify-between gap-4">
-                <div class="space-y-2">
-                  <div class="flex items-center gap-2">
-                    <h3 class="text-lg font-semibold">当前授权</h3>
-                    <span
-                      v-if="featureAccessStatus?.exists"
-                      class="badge"
-                      :class="featureAccessStatus.ready ? 'badge-success' : 'badge-warning'"
-                    >
-                      {{ featureAccessStatus.ready ? '有效' : '无效' }}
-                    </span>
-                  </div>
-                  <p class="text-sm text-base-content/70">
-                    {{ activationView.featureAccessSummary }}
-                  </p>
-                  <p class="text-xs text-base-content/50">
-                    {{ isDebugAccess
-                      ? '当前为 debug 模式，这里的权限状态仅用于手工验证 release 授权链路，不影响本地开发放行。'
-                      : '服务端激活成功后会开放全部功能，不再按单个功能拆分授权。'
-                    }}
-                  </p>
-                </div>
-                <button class="btn btn-sm btn-outline" @click="featureAccessToolsOpen = !featureAccessToolsOpen">
-                  <i :class="featureAccessToolsOpen ? 'fas fa-chevron-up mr-2' : 'fas fa-chevron-down mr-2'"></i>
-                  {{ featureAccessToolsOpen ? '收起工具' : '展开工具' }}
-                </button>
-              </div>
-
-              <div v-if="featureAccessStatus?.exists" class="rounded-xl border border-base-300 bg-base-100 px-4 py-3 text-sm mt-4">
-                <div class="flex items-center justify-between gap-3">
-                  <span class="font-medium">当前权限状态</span>
-                  <span class="badge" :class="featureAccessStatus.ready ? 'badge-success' : 'badge-warning'">
-                    {{ featureAccessStatus.ready ? '有效' : '无效' }}
-                  </span>
-                </div>
-                <div class="mt-2 space-y-1 text-base-content/70">
-                  <p v-if="featureAccessStatus.tier">等级：{{ featureAccessStatus.tier }}</p>
-                  <p v-if="featureAccessStatus.expiresAt">过期时间：{{ formatTimestamp(featureAccessStatus.expiresAt) }}</p>
-                  <p v-if="featureAccessStatus.scopeIds.length">权限范围：{{ featureAccessStatus.scopeIds.join(', ') }}</p>
-                  <p v-if="!featureAccessStatus.ready">{{ getFeatureAccessIssueMessage(featureAccessStatus) }}</p>
-                </div>
-              </div>
-
-              <div v-if="featureAccessToolsOpen" class="mt-4 space-y-4">
-                <div v-if="accessSyncError" class="alert alert-error">
-                  <i class="fas fa-exclamation-circle"></i>
-                  <span>{{ accessSyncError }}</span>
-                </div>
-
-                <div v-else-if="accessSyncMessage" class="alert alert-success">
-                  <i class="fas fa-check-circle"></i>
-                  <span>{{ accessSyncMessage }}</span>
-                </div>
-
-                <div class="card-actions justify-center">
-                  <button
-                    class="btn btn-outline"
-                    :class="{ 'loading': accessSyncLoading }"
-                    :disabled="accessSyncLoading"
-                    @click="refreshFeatureAccessFromServer"
-                  >
-                    <i v-if="!accessSyncLoading" class="fas fa-rotate-right mr-2"></i>
-                    立即刷新授权
-                  </button>
-                </div>
-
-                <div class="divider my-2">自动续期</div>
-
-                <div class="alert alert-info">
-                  <i class="fas fa-rotate"></i>
-                  <span>{{ activationView.refreshRuntimeText }}</span>
-                </div>
-                <p class="text-xs text-base-content/50 text-center">
-                  自动续期使用当前设备保存的服务端凭证，不需要用户维护服务地址或 refresh key。
-                </p>
-              </div>
-            </div>
-          </template>
 
           <div class="text-center mt-4">
             <a href="mailto:support@example.com" class="link link-hover text-sm text-base-content/60">

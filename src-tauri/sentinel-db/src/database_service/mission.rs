@@ -551,6 +551,26 @@ impl DatabaseService {
         Ok(rows)
     }
 
+    pub async fn count_consecutive_mission_failures(&self, mission_id: &str) -> Result<i64> {
+        let pool = self.require_sqlite_pool()?;
+        let rows = sqlx::query_as::<_, (String,)>(
+            "SELECT status FROM mission_runs WHERE mission_id = ? ORDER BY run_index DESC",
+        )
+        .bind(mission_id)
+        .fetch_all(pool)
+        .await?;
+
+        let mut count = 0_i64;
+        for (status,) in rows {
+            if status == "failed" || status == "timed_out" {
+                count += 1;
+            } else {
+                break;
+            }
+        }
+        Ok(count)
+    }
+
     pub async fn update_mission_run_status(
         &self,
         run_id: &str,
@@ -1050,6 +1070,22 @@ impl DatabaseService {
         .fetch_all(pool)
         .await?;
         Ok(rows)
+    }
+
+    pub async fn set_mission_next_run_at(
+        &self,
+        mission_id: &str,
+        next_run_at: Option<DateTime<Utc>>,
+    ) -> Result<()> {
+        let pool = self.require_sqlite_pool()?;
+        let now = Utc::now();
+        sqlx::query("UPDATE missions SET next_run_at = ?, updated_at = ? WHERE id = ?")
+            .bind(next_run_at)
+            .bind(now)
+            .bind(mission_id)
+            .execute(pool)
+            .await?;
+        Ok(())
     }
 
     pub async fn update_mission_next_run(
@@ -1607,5 +1643,101 @@ mod tests {
         assert!(detail.actions.is_empty());
         assert!(detail.action_results.is_empty());
         assert!(detail.events.is_empty());
+    }
+
+    #[tokio::test]
+    async fn counts_consecutive_failed_mission_runs() {
+        let service = in_memory_service().await;
+        let mission = service
+            .create_mission(CreateMissionRequest {
+                title: "Failure streak".to_string(),
+                objective: "Track consecutive failures".to_string(),
+                owner_kind: "user".to_string(),
+                owner_ref: "default".to_string(),
+                source_json: None,
+                delivery_policy_json: None,
+                assistant_profile_id: None,
+                trigger_json: Some(serde_json::json!({"kind":"manual"}).to_string()),
+                mission_spec_json: None,
+                step_plan_json: None,
+                success_criteria_json: None,
+                context_strategy_json: None,
+                budget_json: None,
+                failure_policy_json: None,
+                missed_run_policy: "skip".to_string(),
+                next_run_at: None,
+            })
+            .await
+            .expect("create mission");
+
+        let run1 = service
+            .create_mission_run(&mission.id, "scheduled")
+            .await
+            .expect("create run1");
+        service
+            .update_mission_run_status(&run1.id, "failed", Some("err1"), None)
+            .await
+            .expect("fail run1");
+
+        let run2 = service
+            .create_mission_run(&mission.id, "scheduled")
+            .await
+            .expect("create run2");
+        service
+            .update_mission_run_status(&run2.id, "failed", Some("err2"), None)
+            .await
+            .expect("fail run2");
+
+        let count = service
+            .count_consecutive_mission_failures(&mission.id)
+            .await
+            .expect("count failures");
+        assert_eq!(count, 2);
+    }
+
+    #[tokio::test]
+    async fn set_mission_next_run_at_persists_schedule() {
+        let service = in_memory_service().await;
+        let mission = service
+            .create_mission(CreateMissionRequest {
+                title: "Scheduled mission".to_string(),
+                objective: "Run on cron".to_string(),
+                owner_kind: "observer".to_string(),
+                owner_ref: "global".to_string(),
+                source_json: None,
+                delivery_policy_json: None,
+                assistant_profile_id: None,
+                trigger_json: Some(
+                    serde_json::json!({
+                        "kind": "cron",
+                        "cron_expr": "0 * * * *",
+                        "timezone": "UTC"
+                    })
+                    .to_string(),
+                ),
+                mission_spec_json: None,
+                step_plan_json: None,
+                success_criteria_json: None,
+                context_strategy_json: None,
+                budget_json: None,
+                failure_policy_json: None,
+                missed_run_policy: "skip".to_string(),
+                next_run_at: None,
+            })
+            .await
+            .expect("create mission");
+
+        let next = Utc::now() + chrono::Duration::hours(1);
+        service
+            .set_mission_next_run_at(&mission.id, Some(next))
+            .await
+            .expect("set next run");
+
+        let updated = service
+            .get_mission(&mission.id)
+            .await
+            .expect("get mission")
+            .expect("mission exists");
+        assert!(updated.next_run_at.is_some());
     }
 }

@@ -2,6 +2,9 @@
 
 pub mod agent_builder;
 pub mod context_engineering;
+pub mod skills_injection;
+pub mod skill_context_modifier;
+pub mod skill_fork;
 pub mod control_plane;
 pub mod executor;
 pub mod sliding_window;

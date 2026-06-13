@@ -13,15 +13,6 @@ pub struct AppEntitlements {
     pub is_licensed: bool,
     pub has_local_license: bool,
     pub access_source: String,
-    pub trial_active: bool,
-    pub trial_started_at: Option<i64>,
-    pub trial_expires_at: Option<i64>,
-    pub trial_remaining_seconds: Option<i64>,
-    pub trial_days_remaining: Option<i64>,
-    pub has_valid_entitlement_token: bool,
-    pub entitlement_feature_ids: Vec<String>,
-    pub entitlement_expires_at: Option<i64>,
-    pub entitlement_license_id: Option<String>,
     pub can_access_all_plugins: bool,
     pub can_access_bug_bounty: bool,
     pub can_access_bot_console: bool,
@@ -41,25 +32,38 @@ pub fn get_free_tier_allowed_plugin_ids() -> Vec<String> {
         .collect()
 }
 
+fn pro_entitlements(access_source: &str) -> AppEntitlements {
+    AppEntitlements {
+        tier: "pro".to_string(),
+        is_licensed: true,
+        has_local_license: access_source == "local_license",
+        access_source: access_source.to_string(),
+        can_access_all_plugins: true,
+        can_access_bug_bounty: true,
+        can_access_bot_console: true,
+        can_manage_plugin_catalog: true,
+        can_add_plugins: true,
+        can_edit_plugins: true,
+        can_delete_plugins: true,
+        can_install_plugins: true,
+        can_review_plugins: true,
+        allowed_plugin_ids: get_free_tier_allowed_plugin_ids(),
+    }
+}
+
 pub fn build_app_entitlements() -> AppEntitlements {
     let allowed_plugin_ids = get_free_tier_allowed_plugin_ids();
 
-    // Debug builds and enforcement-disabled builds both get full pro access.
     if cfg!(debug_assertions) || !sentinel_license::is_enforcement_enabled() {
         return AppEntitlements {
             tier: "pro".to_string(),
             is_licensed: true,
             has_local_license: true,
-            access_source: if cfg!(debug_assertions) { "debug" } else { "open" }.to_string(),
-            trial_active: false,
-            trial_started_at: None,
-            trial_expires_at: None,
-            trial_remaining_seconds: None,
-            trial_days_remaining: None,
-            has_valid_entitlement_token: false,
-            entitlement_feature_ids: Vec::new(),
-            entitlement_expires_at: None,
-            entitlement_license_id: None,
+            access_source: if cfg!(debug_assertions) {
+                "debug".to_string()
+            } else {
+                "open".to_string()
+            },
             can_access_all_plugins: true,
             can_access_bug_bounty: true,
             can_access_bot_console: true,
@@ -73,63 +77,8 @@ pub fn build_app_entitlements() -> AppEntitlements {
         };
     }
 
-    let token_claims = sentinel_license::get_valid_entitlement_claims();
-    let trial_status = sentinel_license::get_or_create_trial_status();
-
-    if let Some(claims) = token_claims {
-        return AppEntitlements {
-            tier: claims.tier.clone(),
-            is_licensed: true,
-            has_local_license: true,
-            access_source: "server_activation".to_string(),
-            trial_active: trial_status.active,
-            trial_started_at: trial_status.started_at,
-            trial_expires_at: trial_status.expires_at,
-            trial_remaining_seconds: trial_status.remaining_seconds,
-            trial_days_remaining: trial_status.days_remaining,
-            has_valid_entitlement_token: true,
-            entitlement_feature_ids: claims.feature_ids.clone(),
-            entitlement_expires_at: Some(claims.expires_at),
-            entitlement_license_id: claims.license_id.clone(),
-            can_access_all_plugins: true,
-            can_access_bug_bounty: true,
-            can_access_bot_console: true,
-            can_manage_plugin_catalog: true,
-            can_add_plugins: true,
-            can_edit_plugins: true,
-            can_delete_plugins: true,
-            can_install_plugins: true,
-            can_review_plugins: true,
-            allowed_plugin_ids,
-        };
-    }
-
-    if trial_status.active {
-        return AppEntitlements {
-            tier: "trial".to_string(),
-            is_licensed: true,
-            has_local_license: false,
-            access_source: "trial".to_string(),
-            trial_active: true,
-            trial_started_at: trial_status.started_at,
-            trial_expires_at: trial_status.expires_at,
-            trial_remaining_seconds: trial_status.remaining_seconds,
-            trial_days_remaining: trial_status.days_remaining,
-            has_valid_entitlement_token: false,
-            entitlement_feature_ids: Vec::new(),
-            entitlement_expires_at: None,
-            entitlement_license_id: None,
-            can_access_all_plugins: true,
-            can_access_bug_bounty: true,
-            can_access_bot_console: true,
-            can_manage_plugin_catalog: true,
-            can_add_plugins: true,
-            can_edit_plugins: true,
-            can_delete_plugins: true,
-            can_install_plugins: true,
-            can_review_plugins: true,
-            allowed_plugin_ids,
-        };
+    if sentinel_license::has_valid_local_license() {
+        return pro_entitlements("local_license");
     }
 
     AppEntitlements {
@@ -137,15 +86,6 @@ pub fn build_app_entitlements() -> AppEntitlements {
         is_licensed: false,
         has_local_license: false,
         access_source: "free".to_string(),
-        trial_active: false,
-        trial_started_at: trial_status.started_at,
-        trial_expires_at: trial_status.expires_at,
-        trial_remaining_seconds: trial_status.remaining_seconds,
-        trial_days_remaining: trial_status.days_remaining,
-        has_valid_entitlement_token: false,
-        entitlement_feature_ids: Vec::new(),
-        entitlement_expires_at: None,
-        entitlement_license_id: None,
         can_access_all_plugins: false,
         can_access_bug_bounty: false,
         can_access_bot_console: false,
@@ -178,10 +118,9 @@ pub fn ensure_bug_bounty_access() -> Result<(), String> {
         return Ok(());
     }
 
-    if sentinel_license::ensure_feature_access(sentinel_license::LicensedFeature::BugBounty)
-        .is_err()
+    if sentinel_license::ensure_feature_access(sentinel_license::LicensedFeature::BugBounty).is_err()
     {
-        return Err("漏洞赏金功能需要完成服务端激活".to_string());
+        return Err("漏洞赏金功能需要完成本地 License 激活".to_string());
     }
 
     Err("漏洞赏金功能仅对付费版开放".to_string())
@@ -192,10 +131,9 @@ pub fn ensure_bot_console_access() -> Result<(), String> {
         return Ok(());
     }
 
-    if sentinel_license::ensure_feature_access(sentinel_license::LicensedFeature::BotConsole)
-        .is_err()
+    if sentinel_license::ensure_feature_access(sentinel_license::LicensedFeature::BotConsole).is_err()
     {
-        return Err("Bot 控制台需要完成服务端激活".to_string());
+        return Err("Bot 控制台需要完成本地 License 激活".to_string());
     }
 
     Err("Bot 控制台仅对付费版开放".to_string())
@@ -211,7 +149,7 @@ pub fn ensure_plugin_catalog_write_access() -> Result<(), String> {
     )
     .is_err()
     {
-        return Err("新增、上传、安装或更新插件需要完成服务端激活".to_string());
+        return Err("新增、上传、安装或更新插件需要完成本地 License 激活".to_string());
     }
 
     Err("免费版不支持新增、上传、安装或更新插件".to_string())
@@ -227,7 +165,7 @@ pub fn ensure_plugin_delete_access() -> Result<(), String> {
     )
     .is_err()
     {
-        return Err("删除插件需要完成服务端激活".to_string());
+        return Err("删除插件需要完成本地 License 激活".to_string());
     }
 
     Err("免费版不支持删除插件".to_string())
@@ -241,7 +179,7 @@ pub fn ensure_plugin_allowed_for_current_tier(plugin_id: &str) -> Result<(), Str
     if sentinel_license::ensure_feature_access(sentinel_license::LicensedFeature::PluginCatalogRead)
         .is_err()
     {
-        return Err("访问非白名单插件需要完成服务端激活".to_string());
+        return Err("访问非白名单插件需要完成本地 License 激活".to_string());
     }
 
     Err(format!(

@@ -197,7 +197,7 @@ const routes = [
     path: '/bug-bounty',
     name: 'BugBounty',
     component: BugBounty,
-    meta: { title: '漏洞赏金' },
+    meta: { title: '漏洞赏金', requiresLicense: true },
   },
   {
     path: '/cyberchef',
@@ -267,6 +267,14 @@ router.beforeEach(async (to, _from, next) => {
     if (!activeTimers.has(timerKey)) {
       console.time(timerKey)
       activeTimers.add(timerKey)
+    }
+  }
+
+  if (to.meta?.requiresLicense) {
+    const { getFeatureEntitlements } = await import('./services/featureEntitlements')
+    const entitlements = await getFeatureEntitlements()
+    if (!entitlements.is_licensed) {
+      return next('/dashboard')
     }
   }
 

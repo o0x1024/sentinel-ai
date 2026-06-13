@@ -94,7 +94,7 @@ pub(crate) fn parse_js_literals(_code: String, _filename: Option<String>) -> JsP
 }
 
 // ---------------------------------------------------------------------------
-// HTTP fetch (shared with qjs_runtime host functions)
+// HTTP fetch (shared with sentinel_js_runtime host functions)
 // ---------------------------------------------------------------------------
 
 pub(crate) async fn plugin_fetch(url: String, options: FetchOptions) -> FetchResponse {
@@ -1089,10 +1089,8 @@ impl PluginEngine {
         self.metadata.as_ref()
     }
 
-    /// Set memory limit on the QuickJS runtime (no-op for fuel — QuickJS uses memory limits).
+    /// Set memory limit on the runtime (no-op — SentinelJsRuntime uses memory limits set at creation).
     pub fn set_fuel(&mut self, _fuel: u64) {
-        // QuickJS uses memory limits instead of fuel-based limits.
-        // The memory limit is set during QjsPluginRuntime::new().
     }
 }
 

@@ -336,6 +336,27 @@ impl MemoryLexicalIndex {
 
         Ok(rows)
     }
+
+    pub async fn delete_document(&self, id: &str) -> Result<bool> {
+        let trimmed = id.trim();
+        if trimmed.is_empty() {
+            return Ok(false);
+        }
+
+        let conn = Connection::open(&self.database_path)
+            .await
+            .map_err(|e| anyhow!("Failed to open memory lexical DB: {}", e))?;
+        let id = trimmed.to_string();
+        let deleted = conn
+            .call(move |conn| {
+                let changes = conn.execute("DELETE FROM memory_documents WHERE id = ?1", [&id])?;
+                Ok(changes > 0)
+            })
+            .await
+            .map_err(|e| anyhow!("Failed to delete lexical memory document: {}", e))?;
+
+        Ok(deleted)
+    }
 }
 
 pub fn normalize_memory_text(input: &str) -> String {

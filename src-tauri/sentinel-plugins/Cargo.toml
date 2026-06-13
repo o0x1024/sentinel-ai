@@ -19,9 +19,6 @@ sentinel-core = { path = "../sentinel-core", default-features = false }
 # SQLx for database queries (dictionary access)
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "derive", "macros"] }
 
-# QuickJS via rquickjs — ES2023-compliant JS engine for plugin execution
-rquickjs = { version = "0.11", features = ["classes", "properties", "parallel"] }
-
 # Sentinel JS — embedded plugin runtime built on QuickJS-NG
 sentinel-js = { path = "../sentinel-js" }
 
@@ -68,3 +65,38 @@ reqwest = { version = "0.12", features = ["json", "native-tls"] }
 sysinfo = "0.30"
 num_cpus = "1.0"
 walkdir = "2"
+criterion = { version = "0.5", features = ["html_reports", "async_tokio"] }
+tokio = { version = "1.40", features = ["full"] }
+chrono = "0.4"
+
+[[bench]]
+name = "runtime_lifecycle"
+harness = false
+
+[[bench]]
+name = "ts_compilation"
+harness = false
+
+[[bench]]
+name = "plugin_loading"
+harness = false
+
+[[bench]]
+name = "plugin_execution"
+harness = false
+
+[[bench]]
+name = "json_bridge"
+harness = false
+
+[[bench]]
+name = "engine_pool"
+harness = false
+
+[[bench]]
+name = "host_functions"
+harness = false
+
+[[bench]]
+name = "memory_overhead"
+harness = false

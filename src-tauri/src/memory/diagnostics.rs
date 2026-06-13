@@ -41,7 +41,15 @@ impl DurableMemoryDiagnosticsItem {
             .unwrap_or(false);
         let projection_issue = projection
             .as_ref()
-            .map(|state| !retrievable_projection_ready || !state.skill_projected)
+            .map(|state| {
+                !retrievable_projection_ready
+                    || !state.skill_projected
+                    || state
+                        .last_error
+                        .as_ref()
+                        .map(|error| !error.trim().is_empty())
+                        .unwrap_or(false)
+            })
             .unwrap_or(true);
 
         Self {
@@ -171,7 +179,7 @@ mod tests {
     }
 
     #[test]
-    fn diagnostics_treats_lexical_memory_as_ready_without_vector_projection() {
+    fn diagnostics_treats_lexical_memory_with_vector_error_as_issue() {
         let item = DurableMemoryDiagnosticsItem::from_parts(
             memory_record("mem-1"),
             Some(DurableMemoryProjectionState {
@@ -185,7 +193,7 @@ mod tests {
         );
 
         assert!(item.retrievable_projection_ready);
-        assert!(!item.projection_issue);
+        assert!(item.projection_issue);
     }
 
     #[test]

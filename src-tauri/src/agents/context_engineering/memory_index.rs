@@ -60,9 +60,10 @@ pub struct MemoryQuery {
     pub query: String,
     pub top_k: usize,
     pub include_reflection: bool,
+    pub respect_auto_inject_suppression: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct RetrievedMemoryItem {
     pub id: String,
     pub text: String,
@@ -74,6 +75,13 @@ pub struct RetrievedMemoryItem {
     pub importance: u8,
     pub created_at_ms: i64,
     pub score: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct MemoryRetrievalResult {
+    pub hits: Vec<RetrievedMemoryItem>,
+    pub used_canonical_fallback: bool,
+    pub query_used: String,
 }
 
 // ---------------------------------------------------------------------------
@@ -470,6 +478,202 @@ pub async fn retrieve_memory_items_hybrid(
     scored
 }
 
+/// Unified retrieval: hybrid search first, then durable canonical store fallback.
+pub async fn retrieve_memory_unified(
+    app_handle: &AppHandle,
+    state: &mut ContextRunState,
+    query: &MemoryQuery,
+) -> MemoryRetrievalResult {
+    let query_used = expand_memory_retrieval_query(&query.query);
+    let expanded = MemoryQuery {
+        execution_id: query.execution_id.clone(),
+        query: query_used.clone(),
+        top_k: query.top_k,
+        include_reflection: query.include_reflection,
+        respect_auto_inject_suppression: query.respect_auto_inject_suppression,
+    };
+
+    let hits = retrieve_memory_items_hybrid(app_handle, state, &expanded).await;
+    let hits = if query.respect_auto_inject_suppression {
+        crate::memory::filter_hits_for_auto_inject(app_handle, hits)
+            .await
+            .unwrap_or_else(|error| {
+                tracing::warn!("Auto-inject memory filter failed: {}", error);
+                Vec::new()
+            })
+    } else {
+        hits
+    };
+    if !hits.is_empty() {
+        return MemoryRetrievalResult {
+            hits,
+            used_canonical_fallback: false,
+            query_used,
+        };
+    }
+
+    match retrieve_from_canonical_store(app_handle, &expanded).await {
+        Ok(mut canonical_hits) => {
+            if query.respect_auto_inject_suppression {
+                canonical_hits = crate::memory::filter_hits_for_auto_inject(
+                    app_handle,
+                    canonical_hits,
+                )
+                .await
+                .unwrap_or_default();
+            }
+            MemoryRetrievalResult {
+                hits: canonical_hits,
+                used_canonical_fallback: true,
+                query_used,
+            }
+        }
+        Err(error) => {
+            tracing::warn!("Canonical memory fallback failed: {}", error);
+            MemoryRetrievalResult {
+                hits: Vec::new(),
+                used_canonical_fallback: true,
+                query_used,
+            }
+        }
+    }
+}
+
+async fn retrieve_from_canonical_store(
+    app_handle: &AppHandle,
+    query: &MemoryQuery,
+) -> Result<Vec<RetrievedMemoryItem>> {
+    let db = app_handle
+        .try_state::<Arc<sentinel_db::DatabaseService>>()
+        .ok_or_else(|| anyhow::anyhow!("DatabaseService not available"))?
+        .inner()
+        .clone();
+    let recent = db
+        .list_recent_durable_memory_records_internal((query.top_k.max(1) * 10) as i64)
+        .await?;
+
+    let mut scored = recent
+        .into_iter()
+        .filter_map(|record| {
+            let score = memory_keyword_match_score(&query.query, &record.text);
+            if score <= 0.0 {
+                return None;
+            }
+            Some(RetrievedMemoryItem {
+                id: record.id,
+                text: record.text,
+                kind: record.kind,
+                scope: record.scope,
+                stability: record.stability,
+                source: format!("{}:canonical", record.source),
+                confidence: record.confidence,
+                importance: record.importance.clamp(1, 5) as u8,
+                created_at_ms: record.created_at_ms,
+                score,
+            })
+        })
+        .collect::<Vec<_>>();
+
+    scored.sort_by(|a, b| {
+        b.score
+            .partial_cmp(&a.score)
+            .unwrap_or(std::cmp::Ordering::Equal)
+            .then_with(|| b.created_at_ms.cmp(&a.created_at_ms))
+    });
+    scored.truncate(query.top_k.max(1));
+    Ok(scored)
+}
+
+/// Expand a task/query with URL hosts and latin tokens so cross-language retrieval can match.
+pub fn expand_memory_retrieval_query(query: &str) -> String {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+
+    let mut parts = vec![trimmed.to_string()];
+    for signal in extract_memory_query_signals(trimmed) {
+        if !parts.iter().any(|part| part.contains(&signal)) {
+            parts.push(signal);
+        }
+    }
+    parts.join("\n")
+}
+
+pub fn extract_memory_query_signals(text: &str) -> Vec<String> {
+    let mut signals = Vec::new();
+    signals.extend(extract_url_hosts(text));
+    signals.extend(extract_latin_tokens(text));
+
+    signals.sort();
+    signals.dedup();
+    signals
+}
+
+pub fn memory_keyword_match_score(query_text: &str, item_text: &str) -> f64 {
+    let mut best = keyword_score_raw(query_text, item_text);
+    for signal in extract_memory_query_signals(query_text) {
+        best = best.max(keyword_score_raw(&signal, item_text));
+    }
+    best
+}
+
+fn extract_url_hosts(text: &str) -> Vec<String> {
+    let mut hosts = Vec::new();
+    let lower = text.to_lowercase();
+
+    for scheme in ["http://", "https://"] {
+        let mut search_from = 0usize;
+        while let Some(relative) = lower[search_from..].find(scheme) {
+            let url_start = search_from + relative + scheme.len();
+            let rest = &text[url_start..];
+            let end = rest
+                .find(|c: char| c.is_whitespace() || c == ')' || c == ']' || c == '"' || c == '\'')
+                .unwrap_or(rest.len());
+            let authority = rest[..end]
+                .trim_start_matches("//")
+                .split('/')
+                .next()
+                .unwrap_or("");
+            let host = authority
+                .split('@')
+                .next()
+                .unwrap_or(authority)
+                .split(':')
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_lowercase();
+            if !host.is_empty() && host.contains('.') {
+                hosts.push(host);
+            }
+            search_from = url_start.saturating_add(end.max(1));
+        }
+    }
+
+    hosts
+}
+
+fn extract_latin_tokens(text: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+
+    for c in text.chars() {
+        if c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' {
+            current.push(c);
+        } else if !current.is_empty() {
+            if current.len() >= 4 {
+                tokens.push(current.to_lowercase());
+            }
+            current.clear();
+        }
+    }
+    if !current.is_empty() && current.len() >= 4 {
+        tokens.push(current.to_lowercase());
+    }
+    tokens
+}
+
 // ---------------------------------------------------------------------------
 // Vector store integration (SQLite via RAG service)
 // ---------------------------------------------------------------------------
@@ -602,6 +806,10 @@ async fn persist_to_vector_store(app_handle: &AppHandle, items: &[(String, Strin
             "created_at".to_string(),
             Utc::now().timestamp_millis().to_string(),
         );
+        metadata.insert(
+            "memory_id".to_string(),
+            build_memory_document_id(inferred_kind.as_str(), trimmed),
+        );
 
         if let Err(e) = rag_service
             .ingest_text(&title, trimmed, Some(&collection_id), Some(metadata))
@@ -697,7 +905,7 @@ fn keyword_score_raw(query_text: &str, item_text: &str) -> f64 {
 }
 
 pub fn keyword_score_value(query_text: &str, item_text: &str) -> f64 {
-    keyword_score_raw(query_text, item_text)
+    memory_keyword_match_score(query_text, item_text)
 }
 
 fn recency_score(created_at_ms: i64, now_ms: i64) -> f64 {
@@ -918,4 +1126,39 @@ fn fused_candidate_score(candidate: &MemoryCandidate, now_ms: i64) -> f64 {
         + confidence_signal
         + stability_signal
         + source_signal
+}
+
+#[cfg(test)]
+mod memory_query_tests {
+    use super::{
+        expand_memory_retrieval_query, extract_memory_query_signals, memory_keyword_match_score,
+    };
+
+    #[test]
+    fn extract_memory_query_signals_includes_url_host_and_latin_tokens() {
+        let query = "使用 penetration-tester skill 对http://reader.suwell.com/进行渗透";
+        let signals = extract_memory_query_signals(query);
+
+        assert!(signals.contains(&"reader.suwell.com".to_string()));
+        assert!(signals.iter().any(|signal| signal.contains("penetration")));
+    }
+
+    #[test]
+    fn expand_memory_retrieval_query_appends_unique_signals() {
+        let expanded = expand_memory_retrieval_query(
+            "使用 penetration-tester skill 对http://reader.suwell.com/进行渗透",
+        );
+
+        assert!(expanded.contains("reader.suwell.com"));
+        assert!(expanded.contains("penetration"));
+    }
+
+    #[test]
+    fn memory_keyword_match_score_matches_cross_language_via_url_host() {
+        let query = "使用 penetration-tester skill 对http://reader.suwell.com/进行渗透";
+        let memory = "2026-06-12 Penetration test of http://reader.suwell.com/ confirmed SQLi";
+
+        let score = memory_keyword_match_score(query, memory);
+        assert!(score > 0.0);
+    }
 }

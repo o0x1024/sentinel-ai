@@ -38,6 +38,18 @@ export function getSurfaceAssetPrimaryValue(asset: any, typedDetails?: Record<st
   return String(asset?.display_name || asset?.asset_name || asset?.id || '')
 }
 
+let pendingSurfaceAssets: SurfaceReferencedAsset[] = []
+
+export function queueSurfaceAssetForAssistant(asset: SurfaceReferencedAsset) {
+  pendingSurfaceAssets.push(asset)
+}
+
+export function consumePendingSurfaceAssistantAssets(): SurfaceReferencedAsset[] {
+  const assets = pendingSurfaceAssets
+  pendingSurfaceAssets = []
+  return assets
+}
+
 export function buildReferencedSurfaceAsset(detail: any): SurfaceReferencedAsset {
   const asset = detail?.asset || {}
   const typedDetails = detail?.typed_details || {}

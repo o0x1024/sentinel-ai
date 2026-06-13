@@ -2,7 +2,11 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Manager};
 
-use crate::memory::DurableMemoryDiagnosticsItem;
+use crate::memory::{
+    delete_durable_memory, preview_memory_retrieval, set_durable_memory_auto_inject,
+    update_durable_memory, DurableMemoryAutoInjectResult, DurableMemoryDeleteResult,
+    DurableMemoryDiagnosticsItem, DurableMemoryUpdateResult, MemoryRetrieveOutcome,
+};
 use sentinel_db::core::models::database::DurableMemoryProjectionState;
 
 #[tauri::command]
@@ -97,4 +101,50 @@ pub async fn get_durable_memory_diagnostics_by_ids(
     }
 
     Ok(diagnostics)
+}
+
+#[tauri::command]
+pub async fn update_durable_memory_command(
+    app_handle: AppHandle,
+    memory_id: String,
+    text: String,
+    title: Option<String>,
+    kind: Option<String>,
+    tags: Option<Vec<String>>,
+) -> Result<DurableMemoryUpdateResult, String> {
+    update_durable_memory(&app_handle, memory_id, text, title, kind, tags)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn delete_durable_memory_command(
+    app_handle: AppHandle,
+    memory_id: String,
+) -> Result<DurableMemoryDeleteResult, String> {
+    delete_durable_memory(&app_handle, memory_id)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn set_durable_memory_auto_inject_command(
+    app_handle: AppHandle,
+    memory_id: String,
+    enabled: bool,
+) -> Result<DurableMemoryAutoInjectResult, String> {
+    set_durable_memory_auto_inject(&app_handle, memory_id, enabled)
+        .await
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn preview_memory_retrieval_command(
+    app_handle: AppHandle,
+    query: String,
+    top_k: Option<usize>,
+) -> Result<MemoryRetrieveOutcome, String> {
+    preview_memory_retrieval(&app_handle, query, top_k.unwrap_or(8))
+        .await
+        .map_err(|error| error.to_string())
 }

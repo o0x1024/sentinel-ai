@@ -18,7 +18,7 @@ use crate::agents::context_engineering::checkpoint::{
 };
 use crate::agents::context_engineering::engine::ContextEngineMode;
 use crate::agents::context_engineering::memory_index::{
-    evict_low_value_items, ingest_memory_items, retrieve_memory_items_hybrid, MemoryQuery,
+    evict_low_value_items, ingest_memory_items, retrieve_memory_unified, MemoryQuery,
     RetrievedMemoryItem,
 };
 use crate::agents::context_engineering::observability::{record_context_snapshot, ContextSnapshot};
@@ -31,6 +31,10 @@ use crate::agents::context_engineering::sentinel::{
 };
 use crate::agents::context_engineering::token_utils::{
     estimate_message_tokens, estimate_tokens, SYSTEM_MESSAGE_OVERHEAD_TOKENS,
+};
+use crate::agents::context_engineering::skill_protection::{
+    build_protected_skill_instructions, extract_skill_instructions, extract_skill_prompt,
+    skill_char_budget, tier_skill_content, wrap_skill_prompt,
 };
 use crate::agents::context_engineering::tool_digest::condense_text;
 use crate::agents::context_engineering::types::{trim_history_preserve_tool_pairs, ContextPacket};
@@ -89,7 +93,10 @@ struct ExecutionContext {
     docker_config: Option<sentinel_tools::DockerSandboxConfig>,
 }
 
-async fn resolve_execution_context(app_handle: &AppHandle) -> ExecutionContext {
+async fn resolve_execution_context(
+    app_handle: &AppHandle,
+    working_directory: Option<&str>,
+) -> ExecutionContext {
     let shell_config = if let Some(db) = app_handle.try_state::<Arc<sentinel_db::DatabaseService>>()
     {
         crate::commands::tool_commands::agent_config::load_shell_config_from_db(&db).await
@@ -110,10 +117,21 @@ async fn resolve_execution_context(app_handle: &AppHandle) -> ExecutionContext {
             docker_config: shell_config.docker_config,
         }
     } else {
+        let context_dir = working_directory
+            .map(str::trim)
+            .filter(|wd| !wd.is_empty())
+            .map(|wd| {
+                std::path::PathBuf::from(wd)
+                    .join(".sentinel-context")
+                    .display()
+                    .to_string()
+            })
+            .unwrap_or_else(|| get_host_context_dir().display().to_string());
+
         ExecutionContext {
             env: ExecutionEnvironment::Host,
             os_name: std::env::consts::OS.to_string(),
-            context_dir: get_host_context_dir().display().to_string(),
+            context_dir,
             docker_config: None,
         }
     }
@@ -148,7 +166,7 @@ fn build_tool_usage_priority_block(
 
     if has_memory {
         lines.push(
-            "For questions about remembered user facts, preferences, habits, prior statements, or saved decisions, use `memory` action=`retrieve` first. Do not ask the user to repeat stored preferences unless memory retrieval returns no relevant result.".to_string(),
+            "Relevant durable memory is injected automatically in [RetrievedMemory] at run start. Use `memory` action=`store` after finishing work to save reusable findings. Use `memory` action=`retrieve` only for supplemental lookup with a narrower query when automatic context is insufficient.".to_string(),
         );
     }
 
@@ -156,11 +174,6 @@ fn build_tool_usage_priority_block(
         lines.push(
             "Use `ask_user_question` when requirements are ambiguous, when multiple implementation paths are viable, or when you need the user to choose between concrete options.".to_string(),
         );
-        if has_memory {
-            lines.push(
-                "`ask_user_question` is not the first step for questions like what the user likes, remembers, previously said, or prefers; retrieve memory first, then ask only if the memory result is empty or conflicting.".to_string(),
-            );
-        }
     }
 
     let mut file_search_tools = Vec::new();
@@ -244,7 +257,8 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             }
         }
     }
-    let execution_context = resolve_execution_context(&input.app_handle).await;
+    let execution_context =
+        resolve_execution_context(&input.app_handle, input.working_directory.as_deref()).await;
     let mut policy = input.policy.clone();
     if let Some(db) = input
         .app_handle
@@ -269,12 +283,12 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
 
     if policy.include_skill_instructions {
         if let Some(injected) = input.injected_skill_prompt {
-            system_prompt.push_str(&injected);
+            system_prompt.push_str(&wrap_skill_prompt(&injected));
         }
         if let Some(injected) = input.injected_runtime_context {
             push_runtime_context_block(
                 &mut run_state_block,
-                &build_skill_instructions_context(&injected),
+                &build_protected_skill_instructions(&injected),
             );
         }
     }
@@ -414,15 +428,16 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                 query: retrieval_query,
                 top_k: 8,
                 include_reflection: false,
+                respect_auto_inject_suppression: true,
             };
-            let retrieved =
-                retrieve_memory_items_hybrid(&input.app_handle, &mut state, &query).await;
+            let retrieval = retrieve_memory_unified(&input.app_handle, &mut state, &query).await;
+            let retrieved = retrieval.hits;
             retrieved_memory_ids = retrieved.iter().map(|item| item.id.clone()).collect();
             memory_retrieval_trace = Some(build_memory_retrieval_trace(
-                &query.query,
+                &retrieval.query_used,
                 query.top_k,
                 &retrieved,
-                false,
+                retrieval.used_canonical_fallback,
                 query.include_reflection,
             ));
             let retrieved_text = retrieved
@@ -596,7 +611,13 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         }
     }
 
-    system_prompt = trim_layer(system_prompt, policy.layer_max_chars);
+    // Protect skill content: extract before trimming, re-inject after.
+    let (prompt_without_skills, extracted_skill_prompt) = extract_skill_prompt(&system_prompt);
+    system_prompt = trim_layer(prompt_without_skills, policy.layer_max_chars);
+    if let Some(skill) = extracted_skill_prompt {
+        let budget_chars = skill_char_budget(policy.budget.system_max_tokens);
+        system_prompt.push_str(&wrap_skill_prompt(&tier_skill_content(&skill, budget_chars)));
+    }
 
     let max_context_length =
         get_provider_max_context_length(&input.app_handle, &input.provider_config_key).await?;
@@ -605,10 +626,19 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     let budget = policy.budget.scale_to_context(max_tokens);
 
     let mut packet = ContextPacket::new(system_prompt);
+
+    // Protect skill instructions in run_state: extract, condense rest, re-inject.
+    let (rs_without_skills, rs_extracted_skills) = extract_skill_instructions(&run_state_block);
     packet.run_state = condense_text(
-        &run_state_block,
+        &rs_without_skills,
         run_state_block_target_chars(max_tokens, budget.run_state_max_tokens),
     );
+    if let Some(skill_content) = rs_extracted_skills {
+        let budget_chars = skill_char_budget(budget.run_state_max_tokens);
+        let protected =
+            build_protected_skill_instructions(&tier_skill_content(&skill_content, budget_chars));
+        push_runtime_context_block(&mut packet.run_state, &protected);
+    }
     if policy.feature_context_packet_v2 {
         packet.retrieved_memories = retrieved_memory_lines;
         packet.retrieved_memory_sections = retrieved_memory_sections;
@@ -672,6 +702,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
                     if let Err(e) = sentinel_tools::output_storage::store_history_on_host(
                         &history_content,
                         Some(&input.execution_id),
+                        Some(&execution_context.context_dir),
                     )
                     .await
                     {
@@ -708,20 +739,42 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
     let mut system_tokens =
         estimate_tokens(&system_prompt_content) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
     if system_tokens > final_system_budget {
-        let current_chars = system_prompt_content.chars().count().max(1);
-        let ratio = final_system_budget as f64 / system_tokens as f64;
+        let (content_no_skills, sys_skills) = extract_skill_prompt(&system_prompt_content);
+        let skill_token_reserve = sys_skills
+            .as_ref()
+            .map(|_| (final_system_budget as f64 * 0.20).floor() as usize)
+            .unwrap_or(0);
+        let non_skill_budget = final_system_budget.saturating_sub(skill_token_reserve);
+        let non_skill_tokens =
+            estimate_tokens(&content_no_skills) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
+        let current_chars = content_no_skills.chars().count().max(1);
+        let ratio = (non_skill_budget as f64 / non_skill_tokens as f64).min(1.0);
         let target_chars = ((current_chars as f64) * ratio).floor() as usize;
-        system_prompt_content = condense_text(&system_prompt_content, target_chars.max(200));
+        system_prompt_content = condense_text(&content_no_skills, target_chars.max(200));
+        if let Some(skill) = sys_skills {
+            let budget_chars = skill_char_budget(final_system_budget);
+            system_prompt_content
+                .push_str(&wrap_skill_prompt(&tier_skill_content(&skill, budget_chars)));
+        }
         system_tokens = estimate_tokens(&system_prompt_content) + SYSTEM_MESSAGE_OVERHEAD_TOKENS;
         trim_trace.push("trimmed_system".to_string());
     }
 
     let mut run_state_tokens = estimate_tokens(&packet.run_state);
     if run_state_tokens > budget.run_state_max_tokens {
+        let (rs_no_skills, rs_skills) = extract_skill_instructions(&packet.run_state);
         packet.run_state = condense_text(
-            &packet.run_state,
+            &rs_no_skills,
             run_state_block_target_chars(max_tokens, budget.run_state_max_tokens),
         );
+        if let Some(skill_content) = rs_skills {
+            let budget_chars = skill_char_budget(budget.run_state_max_tokens);
+            let protected = build_protected_skill_instructions(&tier_skill_content(
+                &skill_content,
+                budget_chars,
+            ));
+            push_runtime_context_block(&mut packet.run_state, &protected);
+        }
         run_state_tokens = estimate_tokens(&packet.run_state);
         trim_trace.push("trimmed_run_state".to_string());
     }
@@ -839,6 +892,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         &json!({
             "execution_id": input.execution_id,
             "generation": input.generation,
+            "conversation_id": input.conversation_id,
             "used_tokens": used_tokens,
             "max_tokens": max_tokens,
             "effective_context_tokens": budget_analyzer.effective_context_tokens,
@@ -859,6 +913,9 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
             "summary_segment_count": summary_stats.segment_count,
             "orchestrator_context_tokens": orchestrator_context_tokens,
             "trim_trace": trim_trace,
+            "retrieval_ids": retrieved_memory_ids,
+            "retrieval_tokens": estimate_tokens(&packet.render_retrieved_memory_context()),
+            "memory_retrieval": memory_retrieval_trace,
             "sentinel_mode": sentinel_mode,
             "sentinel_active_intent": sentinel_run_state
                 .as_ref()
@@ -906,6 +963,7 @@ pub async fn build_context(input: ContextBuildInput) -> Result<ContextBuildResul
         &ContextSnapshot {
             execution_id: input.execution_id.clone(),
             generation: input.generation,
+            conversation_id: Some(input.conversation_id.clone()),
             system_tokens: estimate_tokens(&packet.system_instructions),
             run_state_tokens,
             window_tokens: history_tokens,
@@ -1226,15 +1284,6 @@ pub(crate) fn build_task_mainline_context(task: &str) -> String {
     )
 }
 
-pub(crate) fn build_skill_instructions_context(injected: &str) -> String {
-    let trimmed = injected.trim();
-    if trimmed.is_empty() {
-        String::new()
-    } else {
-        format!("[Skill Instructions]\n{}", trimmed)
-    }
-}
-
 fn push_runtime_context_block(target: &mut String, block: &str) {
     let block_trimmed = block.trim();
     if block_trimmed.is_empty() {
@@ -1514,8 +1563,10 @@ mod tests {
         );
 
         assert!(rendered.contains("Use `ask_user_question`"));
-        assert!(rendered.contains("use `memory` action=`retrieve` first"));
-        assert!(rendered.contains("retrieve memory first"));
+        assert!(rendered.contains("[RetrievedMemory]"));
+        assert!(rendered.contains("action=`retrieve` only for supplemental lookup"));
+        assert!(!rendered.contains("use `memory` action=`retrieve` first"));
+        assert!(!rendered.contains("retrieve memory first"));
         assert!(!rendered.contains("Use one-shot `shell`"));
         assert!(!rendered.contains("Use `interactive_shell`"));
         assert!(rendered.contains("Use `browser_shell`"));

@@ -1272,7 +1272,7 @@ fn ensure_profile_creation_allowed() -> Result<(), String> {
     }
 
     Err(
-        "未激活版本只允许修改 Profile 配置，不支持创建 Profile。请输入卡密激活后再创建。"
+        "未激活版本只允许修改 Profile 配置，不支持创建 Profile。请完成本地 License 激活后再创建。"
             .to_string(),
     )
 }

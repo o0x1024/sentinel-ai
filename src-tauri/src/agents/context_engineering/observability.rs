@@ -9,6 +9,7 @@ use tauri::{AppHandle, Emitter};
 pub struct ContextSnapshot {
     pub execution_id: String,
     pub generation: Option<u64>,
+    pub conversation_id: Option<String>,
     pub system_tokens: usize,
     pub run_state_tokens: usize,
     pub window_tokens: usize,
@@ -54,6 +55,7 @@ pub fn record_context_snapshot(app_handle: &AppHandle, snapshot: &ContextSnapsho
         &json!({
             "execution_id": snapshot.execution_id,
             "generation": snapshot.generation,
+            "conversation_id": snapshot.conversation_id,
             "system_tokens": snapshot.system_tokens,
             "run_state_tokens": snapshot.run_state_tokens,
             "window_tokens": snapshot.window_tokens,

@@ -11,6 +11,7 @@
         :to="item.path"
         class="btn btn-ghost btn-circle inline-flex items-center justify-center shrink-0 tooltip tooltip-right relative"
         :data-tip="item.name"
+        @click.capture="(e: MouseEvent) => handleMenuClick(e, item)"
       >
         <i :class="`${item.icon} text-xl leading-none`"></i>
         <span
@@ -86,6 +87,7 @@
                     ? isSecurityCenterRoute
                     : route.path === item.path,
                 }"
+                @click.capture="(e: MouseEvent) => handleMenuClick(e, item)"
               >
                 <span class="sidebar-menu-icon">
                   <i :class="`${item.icon} text-lg leading-none`"></i>
@@ -214,13 +216,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, inject, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { useRoute } from 'vue-router'
 import { invoke } from '@tauri-apps/api/core'
 import { useNotificationCenter } from '@/composables/useNotificationCenter'
 import { useSecurityCenterActivity } from '@/composables/useSecurityCenterActivity'
-import { getFeatureEntitlements } from '@/services/featureEntitlements'
+import { getFeatureEntitlements, useFeatureEntitlementsState } from '@/services/featureEntitlements'
 
 interface SidebarBadgeItem {
   key: string
@@ -258,6 +260,9 @@ const {
   unreadWorkbenchCaseCount,
   unreadSecurityCenterCount,
 } = useSecurityCenterActivity()
+const entitlements = useFeatureEntitlementsState()
+const openLicenseDialog = inject<() => void>('openLicenseDialog', () => {})
+const canAccessBugBounty = computed(() => entitlements.value.can_access_bug_bounty)
 const unreadActivityCount = computed(() => unreadMessageCount.value + unreadNotificationCount.value)
 const isSecurityCenterRoute = computed(() => {
   if (route.path.startsWith('/security-center')) {
@@ -314,6 +319,16 @@ const securityCenterBadgeClass = computed(() => {
   return ''
 })
 
+const licensedPaths = new Set(['/bug-bounty'])
+
+const handleMenuClick = (event: MouseEvent, item: SidebarMenuItem) => {
+  if (licensedPaths.has(item.path) && !canAccessBugBounty.value) {
+    event.preventDefault()
+    event.stopPropagation()
+    openLicenseDialog()
+  }
+}
+
 // 主要功能菜单项
 const mainMenuItems = computed<SidebarMenuItem[]>(() => {
   const items: SidebarMenuItem[] = [
@@ -368,6 +383,8 @@ const mainMenuItems = computed<SidebarMenuItem[]>(() => {
     icon: 'fas fa-trophy',
     badge: null,
     badgeClass: '',
+    badgeIcon: canAccessBugBounty.value ? null : 'fas fa-lock',
+    badgeTitle: canAccessBugBounty.value ? undefined : '需要授权激活',
   })
 
   return items

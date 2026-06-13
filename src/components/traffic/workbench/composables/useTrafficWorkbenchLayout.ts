@@ -1,7 +1,7 @@
 import { computed, ref, type Ref } from 'vue'
 import { setLocalStorageItem } from '@/utils/browserStorage'
 
-export const TRAFFIC_WORKBENCH_XL_BREAKPOINT = 1280
+export const TRAFFIC_WORKBENCH_XL_BREAKPOINT = 1024
 export const TRAFFIC_WORKBENCH_COLUMN_GAP = 8
 export const TRAFFIC_WORKBENCH_RESIZER_WIDTH = 3
 export const TRAFFIC_WORKBENCH_HISTORY_PANEL_DEFAULT_WIDTH = 620
@@ -192,13 +192,15 @@ export function useTrafficWorkbenchLayout(options: {
   const workbenchGridMode = computed(() =>
     getTrafficWorkbenchGridMode(availableWorkbenchWidth.value, layoutPreference.value),
   )
-  const isTopBottomLayout = computed(() => workbenchGridMode.value === 'top-bottom')
+  const isTopBottomLayout = computed(
+    () =>
+      workbenchGridMode.value === 'top-bottom'
+      || (workbenchGridMode.value === 'stacked' && layoutPreference.value === 'top-bottom'),
+  )
   const showHistoryPanelResizeHandle = computed(() =>
     workbenchGridMode.value === 'split' || workbenchGridMode.value === 'top-bottom',
   )
-  const showSidebarHeightResizeHandle = computed(() =>
-    workbenchGridMode.value === 'split' || workbenchGridMode.value === 'top-bottom',
-  )
+  const showSidebarHeightResizeHandle = computed(() => isTopBottomLayout.value || workbenchGridMode.value === 'split')
   const workbenchGridStyle = computed(() => {
     // In stacked mode (< xl breakpoint), divide the height explicitly:
     // left column (history + sidebar) takes 2 shares, main stage takes 3 shares.
@@ -228,12 +230,16 @@ export function useTrafficWorkbenchLayout(options: {
     }
   })
   const leftColumnStyle = computed(() => {
+    const leftColumnMode =
+      workbenchGridMode.value === 'stacked' && layoutPreference.value === 'top-bottom'
+        ? 'top-bottom'
+        : workbenchGridMode.value
     const templateRows = buildTrafficWorkbenchLeftColumnTemplate({
       mode: workbenchGridMode.value,
       sidebarHeight: sidebarHeight.value,
     })
     const templateColumns = buildTrafficWorkbenchLeftColumnColumns({
-      mode: workbenchGridMode.value,
+      mode: leftColumnMode,
       sidebarWidth: sidebarWidth.value,
     })
     if (workbenchGridMode.value === 'split') {
@@ -248,8 +254,13 @@ export function useTrafficWorkbenchLayout(options: {
         columnGap: '0px',
       }
     }
-    // stacked mode: split the left column evenly between history list and sidebar controls.
-    // Both have overflow-auto so they scroll when content exceeds their allocated space.
+    if (layoutPreference.value === 'top-bottom') {
+      return {
+        gridTemplateColumns: templateColumns,
+        columnGap: '0px',
+      }
+    }
+    // Narrow stacked fallback for side preference: history above sidebar in the top band.
     return {
       gridTemplateRows: 'minmax(0, 1fr) minmax(0, 1fr)',
       rowGap: `${TRAFFIC_WORKBENCH_COLUMN_GAP}px`,
@@ -267,9 +278,15 @@ export function useTrafficWorkbenchLayout(options: {
   const layoutToggleIcon = computed(() =>
     layoutPreference.value === 'top-bottom' ? 'fas fa-columns' : 'fas fa-grip-lines',
   )
-  const effectiveLayoutLabel = computed(() =>
-    workbenchGridMode.value === 'split' ? '左右布局' : '上下布局',
-  )
+  const effectiveLayoutLabel = computed(() => {
+    if (workbenchGridMode.value === 'split') {
+      return '左右布局'
+    }
+    if (workbenchGridMode.value === 'top-bottom') {
+      return '上下布局'
+    }
+    return layoutPreference.value === 'top-bottom' ? '上下布局' : '左右布局'
+  })
   const interceptDrawerStyle = computed(() =>
     viewportWidth.value <= 1024 ? {} : { width: `${interceptDrawerWidth.value}px` },
   )
@@ -471,11 +488,11 @@ export function useTrafficWorkbenchLayout(options: {
   }
 
   function startSidebarHeightResize(event: MouseEvent) {
-    if (workbenchGridMode.value !== 'split' && workbenchGridMode.value !== 'top-bottom') {
+    if (!showSidebarHeightResizeHandle.value) {
       return
     }
 
-    const axis = workbenchGridMode.value === 'top-bottom' ? 'x' : 'y'
+    const axis = isTopBottomLayout.value ? 'x' : 'y'
     sidebarHeightResizeState.value = {
       axis,
       startPosition: axis === 'x' ? event.clientX : event.clientY,

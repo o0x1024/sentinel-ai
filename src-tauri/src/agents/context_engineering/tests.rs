@@ -3,8 +3,9 @@ use sentinel_llm::ChatMessage;
 use crate::agents::context_engineering::builder::{
     build_browser_shell_session_context, build_context_storage_context,
     build_document_attachments_context, build_execution_environment_context,
-    build_skill_instructions_context, build_system_context, build_task_mainline_context,
+    build_system_context, build_task_mainline_context,
 };
+use crate::agents::context_engineering::skill_protection::build_protected_skill_instructions;
 use crate::agents::context_engineering::engine::ContextEngineMode;
 use crate::agents::context_engineering::memory_index::{
     ingest_memory_items, retrieve_memory_items, MemoryQuery,
@@ -50,6 +51,7 @@ fn memory_retrieval_prefers_relevant_items() {
         query: "which port does service run".to_string(),
         top_k: 3,
         include_reflection: false,
+        respect_auto_inject_suppression: false,
     };
     let items = retrieve_memory_items(&mut state, &query);
     assert!(!items.is_empty());
@@ -108,6 +110,7 @@ fn memory_retrieval_excludes_reflection_by_default() {
         query: "why did task fail timeout".to_string(),
         top_k: 5,
         include_reflection: false,
+        respect_auto_inject_suppression: false,
     };
 
     let items = retrieve_memory_items(&mut state, &query);
@@ -272,7 +275,7 @@ fn selected_skill_content_is_runtime_context_not_system_prompt() {
         "STATIC_RULES\n<available_skills>\nskill list stays in system\n</available_skills>"
             .to_string(),
     );
-    packet.run_state = build_skill_instructions_context(
+    packet.run_state = build_protected_skill_instructions(
         "[SkillContentBegin: Audit]\nread the selected workflow\n[SkillContentEnd]",
     );
 

@@ -1,5 +1,6 @@
 import type { Ref } from 'vue'
 
+import { isSkillsToolSuccess } from '@/components/Agent/skillsToolSupport'
 import type { AgentMessage } from '@/types/agent'
 import { buildTerminalSessionFingerprint } from '@/composables/useTerminal'
 import { buildAgentSessionStats } from '@/components/Agent/agentSessionStatsSupport'
@@ -230,6 +231,10 @@ export const deriveInteractiveShellFingerprint = (
 }
 
 export const inferToolSuccess = (raw: any): boolean => {
+  if (isSkillsToolSuccess(raw)) {
+    return true
+  }
+
   const isStructuredHttpResponse = (value: Record<string, any>): boolean =>
     typeof value.status_code === 'number' &&
     typeof value.headers === 'object' &&

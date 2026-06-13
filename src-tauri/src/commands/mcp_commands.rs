@@ -11,11 +11,7 @@ use tokio::sync::RwLock;
 
 use sentinel_db::Database;
 use sentinel_db::DatabaseService;
-use sentinel_tools::mcp_transport::{connect_mcp_client, McpClient, McpTransportConfig};
-
-/// Persistent MCP client connections - keeps the client alive for tool calls
-static PERSISTENT_CLIENTS: Lazy<RwLock<HashMap<String, Arc<tokio::sync::Mutex<McpClient>>>>> =
-    Lazy::new(|| RwLock::new(HashMap::new()));
+use sentinel_tools::mcp_transport::{connect_mcp_client, McpTransportConfig};
 
 /// MCP connection info for frontend
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -305,10 +301,9 @@ async fn connect_server_internal(
             .await;
     }
 
-    {
-        let mut clients = PERSISTENT_CLIENTS.write().await;
-        clients.insert(name.clone(), Arc::new(tokio::sync::Mutex::new(client)));
-    }
+    // Store persistent client in both the local map (for mcp_call_tool from
+    // frontend) and the adapter (for agent tool executor).
+    sentinel_tools::mcp_adapter::store_persistent_client(&name, client).await;
 
     tracing::info!(
         "MCP server {} connected with id: {} (persistent client stored)",
@@ -402,14 +397,7 @@ pub async fn mcp_disconnect_server(
         active.remove(&name);
         drop(active);
 
-        {
-            let mut clients = PERSISTENT_CLIENTS.write().await;
-            if let Some(client_arc) = clients.remove(&name) {
-                tracing::info!("Removing persistent MCP client for server: {}", name);
-                if let Ok(_client) = client_arc.try_lock() {}
-            }
-        }
-
+        // unregister_mcp_connection also removes the persistent client
         sentinel_tools::mcp_adapter::unregister_mcp_connection(&name).await;
         mark_server_auto_connect(db.inner(), "", &name, false).await;
 
@@ -569,11 +557,8 @@ pub async fn mcp_call_tool(
 
     // tracing::info!("Using MCP server: {}", server_name);
 
-    // Try to get existing persistent client
-    let client_arc = {
-        let clients = PERSISTENT_CLIENTS.read().await;
-        clients.get(&server_name).cloned()
-    };
+    // Try to get existing persistent client from the adapter
+    let client_arc = sentinel_tools::mcp_adapter::get_persistent_client(&server_name).await;
 
     // Convert arguments ahead of time
     let args_map: Option<serde_json::Map<String, serde_json::Value>> = if arguments.is_object() {

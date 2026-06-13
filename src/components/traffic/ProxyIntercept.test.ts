@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { flushPromises, mount } from '@vue/test-utils'
-import { describe, it, vi, beforeEach } from 'vitest'
+import { describe, it, vi, beforeEach, expect } from 'vitest'
 import ProxyIntercept from './ProxyIntercept.vue'
 import { createHttpMessageSurfaceStub, createTrafficMessageViewTabsStub } from './trafficMessageViewTestStubs'
 import { expectReadonlyHttpSurface } from './trafficMessageViewTestAssertions'

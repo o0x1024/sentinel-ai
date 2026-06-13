@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, computed, watch, onUnmounted, nextTick } from 'vue'
+import { onMounted, ref, computed, watch, onUnmounted, nextTick, provide } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
 import { invoke } from '@tauri-apps/api/core'
@@ -13,6 +13,7 @@ import AppDialog from './components/AppDialog.vue'
 import GlobalPluginEditor from './components/PluginManagement/GlobalPluginEditor.vue'
 import AskUserQuestionModal from './components/Agent/AskUserQuestionModal.vue'
 
+import LicenseActivation from './components/LicenseActivation.vue'
 import Toast from './components/Toast.vue'
 import { setLanguage } from './i18n'
 import { isGlobalSearchShortcut, requestGlobalSearchOpen } from './services/globalSearchFocus'
@@ -28,6 +29,8 @@ import { isEditableKeyboardEvent, isEditableKeyboardTarget } from './utils/edita
 const router = useRouter()
 const route = useRoute()
 const isStandaloneRoute = computed(() => Boolean(route.meta?.standalone))
+const licenseActivationRef = ref<InstanceType<typeof LicenseActivation> | null>(null)
+provide('openLicenseDialog', () => licenseActivationRef.value?.openDialog())
 const routeKeepAliveIncludes = [
   'CyberChefView',
   'BotConsole',
@@ -403,6 +406,7 @@ watch(
       <router-view />
     </template>
 
+    <LicenseActivation ref="licenseActivationRef" />
     <Toast />
     <AskUserQuestionModal />
   </div>

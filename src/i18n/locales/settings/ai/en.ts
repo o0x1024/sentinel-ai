@@ -92,7 +92,7 @@ export default {
   maxContextLength: 'Max Context Length',
   maxContextLengthHint: 'Maximum context window size (tokens) supported by this provider. History will be auto-summarized when exceeded',
   outputStorageThreshold: 'Output Storage Threshold',
-  outputStorageThresholdHint: 'Recommended range: 8K-32K. Outputs above this threshold are auto-stored to files instead of direct return; Agent can retrieve them on-demand via shell/grep (Dynamic Context Discovery, hard cap 50K).',
+  outputStorageThresholdHint: 'Default 50K, adjustable 8K-100K. Outputs above this threshold are auto-stored to files instead of direct return; Agent can retrieve them on-demand via file_read/shell (Dynamic Context Discovery, aligned with Claude Code).',
   maxTurns: 'Max Conversation Turns',
   maxTurnsHint: 'Limit the maximum number of tool call iterations to prevent infinite loops',
   availableModels: 'Available Models',

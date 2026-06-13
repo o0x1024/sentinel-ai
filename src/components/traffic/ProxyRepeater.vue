@@ -19,7 +19,7 @@
       <TrafficContextSubmenu
         v-if="repeaterCodecSubmenu"
         :submenu="repeaterCodecSubmenu"
-        label-prefix="trafficAnalysis.repeater.contextMenu"
+        label-prefix="trafficAnalysis.codec"
       />
       <div v-if="repeaterTextCodecSubmenu && repeaterContextMenuAfterCodecSections.length" class="divider my-1 h-0"></div>
       <TrafficContextMenuSections
@@ -509,6 +509,12 @@
       </div>
     </div>
   </div>
+
+  <TrafficCodecRuleDialog
+    ref="codecRuleDialogRef"
+    :initial-meta="codecRuleDialogInitialMeta"
+    @saved="handleCodecRuleSaved"
+  />
 </template>
 
 <script setup lang="ts">
@@ -564,11 +570,16 @@ import type { RequestDraft } from './workbench/model/requestDraft'
 import type { TrafficWorkbenchRequestContext, TrafficWorkbenchRequestVariant } from './trafficWorkbenchTypes'
 import { useTrafficCodec } from './codec/useTrafficCodec'
 import { buildTrafficCodecContextSubmenu, extractCodecMetaFromRawRequest } from './codec/trafficCodecContextMenuSupport'
+import TrafficCodecRuleDialog from './codec/TrafficCodecRuleDialog.vue'
+import { openTrafficCodecRulesSettings } from './codec/trafficCodecSettingsSupport'
+import type { CodecRequestMeta } from './codec/trafficCodecTypes'
 
 const { t, locale } = useI18n();
 const codec = useTrafficCodec()
 const activeCodecRuleIds = ref<string[]>([])
 const codecOriginalRawByTabId = new Map<string, string>()
+const codecRuleDialogRef = ref<InstanceType<typeof TrafficCodecRuleDialog> | null>(null)
+const codecRuleDialogInitialMeta = ref<CodecRequestMeta | undefined>(undefined)
 const { enabledTargets } = useTrafficSendTargets()
 const { settings } = useTrafficDisplaySettings()
 const REQUEST_PANE_COMPACT_THRESHOLD = 640
@@ -885,11 +896,15 @@ const repeaterCodecSubmenu = computed(() => {
       hideContextMenu()
     },
     onCreateRule: () => {
-      // TODO: open rule creation dialog (Task 8)
+      const tab = currentTab.value
+      if (tab) {
+        codecRuleDialogInitialMeta.value = extractCodecMetaFromRawRequest(tab.rawRequest, tab.targetHost)
+        codecRuleDialogRef.value?.showModal()
+      }
       hideContextMenu()
     },
     onManageRules: () => {
-      // TODO: open rules panel (Task 11)
+      openTrafficCodecRulesSettings()
       hideContextMenu()
     },
   })
@@ -1307,6 +1322,11 @@ function resetRepeaterCodecOriginal(tab: RepeaterTab) {
   activeCodecRuleIds.value = []
 }
 
+function handleCodecRuleSaved() {
+  codec.invalidateCache()
+  void loadRepeaterCodecContent()
+}
+
 async function loadRepeaterCodecContent() {
   const tab = currentTab.value
   if (!tab || tab.requestTab === 'hex') return
@@ -1424,7 +1444,7 @@ async function sendRequest() {
       )
       const encodeResult = await codec.encode(rawRequestToSend, meta)
       if (!encodeResult.success) {
-        dialog.toast.error(`编码失败: ${encodeResult.error}`)
+        dialog.toast.error(t('trafficAnalysis.codec.errors.encodeFailed', { error: encodeResult.error }))
         tab.isSending = false
         abortControllers.delete(tab.id)
         return

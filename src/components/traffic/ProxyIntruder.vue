@@ -184,7 +184,7 @@ import {
 } from './intruder/results'
 import { buildIntruderResourcePoolAutoName, createBuiltInResourcePools, createIntruderAttackTemplate, exportIntruderResultsCsv, loadIntruderAttackTemplates, loadIntruderResourcePools, normalizeVisibleColumns, persistIntruderAttackTemplates, persistIntruderResourcePools, type IntruderAttackTemplate, upsertIntruderResourcePoolEntry } from './intruder/storage'
 import { generateIntruderPluginPayloads, processIntruderPayloadWithPlugin, transformIntruderRequestWithPlugin, type IntruderRequestProcessorTrace } from './intruder/plugins'
-import { encodeIntruderRequestText, type IntruderCodecSession } from './intruder/intruderCodecSupport'
+import { batchEncodeIntruderRequestTexts, encodeIntruderRequestText, type IntruderCodecSession } from './intruder/intruderCodecSupport'
 import { useTrafficCodec } from './codec/useTrafficCodec'
 import { getIntruderAutoThrottleStepMs, getIntruderRuntimeDelayMs, shouldIntruderThrottleForStatus, waitForIntruderDelay } from './intruder/runtimeSupport'
 import { createDefaultIntruderDictionaryPayloadConfig, resolveIntruderDictionaryPayloads } from './intruder/intruderAppDictionaryPayloads'
@@ -1582,29 +1582,35 @@ async function executeAttackRequest(
   payloadValues: string[],
   index: number,
   controller: { cancelled: boolean },
+  options?: { wireRequest?: string },
 ): Promise<IntruderAttackResult> {
   if (controller.cancelled) {
     throw new Error('Attack cancelled')
   }
 
-  const transformedRequest = await applyRequestProcessorPlugins(
-    workspace,
-    requestText,
-    payloadValues,
-    payloadSummary,
-    index,
-  )
-  if (controller.cancelled) {
-    throw new Error('Attack cancelled')
-  }
+  let wireRequest: string
+  if (options?.wireRequest) {
+    wireRequest = options.wireRequest
+  } else {
+    const transformedRequest = await applyRequestProcessorPlugins(
+      workspace,
+      requestText,
+      payloadValues,
+      payloadSummary,
+      index,
+    )
+    if (controller.cancelled) {
+      throw new Error('Attack cancelled')
+    }
 
-  const preparedRequest = applyIntruderRequestSettings(
-    transformedRequest.requestText,
-    workspace.target,
-    workspace.attackOptions,
-  )
-  const codecSession = intruderCodecSessions.get(workspace.id)
-  const wireRequest = await encodeIntruderRequestText(preparedRequest, codecSession, codec)
+    const preparedRequest = applyIntruderRequestSettings(
+      transformedRequest.requestText,
+      workspace.target,
+      workspace.attackOptions,
+    )
+    const codecSession = intruderCodecSessions.get(workspace.id)
+    wireRequest = await encodeIntruderRequestText(preparedRequest, codecSession, codec)
+  }
 
   let attempt = 0
   while (true) {
@@ -1760,6 +1766,54 @@ async function startAttack() {
     return
   }
 
+  const codecSession = intruderCodecSessions.get(workspace.id)
+  type PreparedAttackCandidate = (typeof requests)[number] & { wireRequest?: string }
+  const preparedCandidates: PreparedAttackCandidate[] = []
+
+  for (let i = 0; i < requests.length; i++) {
+    const candidate = requests[i]
+    try {
+      const transformedRequest = await applyRequestProcessorPlugins(
+        workspace,
+        candidate.requestText,
+        candidate.payloadValues,
+        candidate.payloadSummary,
+        i + 1,
+      )
+      preparedCandidates.push({
+        ...candidate,
+        wireRequest: applyIntruderRequestSettings(
+          transformedRequest.requestText,
+          workspace.target,
+          workspace.attackOptions,
+        ),
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : t('trafficAnalysis.intruder.messages.pluginPayloadGenerationFailed')
+      dialog.toast.error(message)
+      return
+    }
+  }
+
+  if (codecSession?.appliedRuleIds.length) {
+    try {
+      const wireRequests = await batchEncodeIntruderRequestTexts(
+        preparedCandidates.map(candidate => candidate.wireRequest ?? candidate.requestText),
+        codecSession,
+        codec,
+      )
+      preparedCandidates.forEach((candidate, index) => {
+        candidate.wireRequest = wireRequests[index]
+      })
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : t('trafficAnalysis.codec.errors.encodeFailed', { error: 'unknown' })
+      dialog.toast.error(message)
+      return
+    }
+  }
+
   workspace.results = []
   workspace.selectedResultId = null
   workspace.progress = {
@@ -1791,7 +1845,7 @@ async function startAttack() {
       if (!liveWorkspace) return
 
       liveWorkspace.progress.active += 1
-      const candidate = requests[currentIndex]
+      const candidate = preparedCandidates[currentIndex]
 
       try {
         const result = await executeAttackRequest(
@@ -1801,6 +1855,7 @@ async function startAttack() {
           candidate.payloadValues,
           currentIndex + 1,
           controller,
+          candidate.wireRequest ? { wireRequest: candidate.wireRequest } : undefined,
         )
         result.isBaseline = Boolean(candidate.isBaseline)
 

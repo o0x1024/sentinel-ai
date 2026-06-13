@@ -343,13 +343,25 @@ fn build_post_compact_state_digest_from_request(request: &ContextCompactionReque
         .as_ref()
         .map(|items| items.len())
         .unwrap_or(0);
-    build_post_compact_state_digest(
+    let mut digest = build_post_compact_state_digest(
         request.phase,
         request.current_tool_ids,
         attachment_count,
         tool_call_count,
         output_chars,
-    )
+    );
+
+    if let Some(reminder) =
+        crate::agents::context_engineering::skill_protection::build_skill_reminder(
+            request.injected_skill_prompt.as_deref(),
+            request.injected_runtime_context.as_deref(),
+        )
+    {
+        digest.push_str("\n\n");
+        digest.push_str(&reminder);
+    }
+
+    digest
 }
 
 fn build_post_compact_state_digest(

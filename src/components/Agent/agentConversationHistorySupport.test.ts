@@ -127,4 +127,32 @@ describe('agentConversationHistorySupport', () => {
     expect(timeline[0].metadata?.tools).toBeUndefined()
     expect(timeline[0].metadata?.tools_preview).toBeUndefined()
   })
+
+  it('restores skill_forked system messages with metadata', () => {
+    const timeline = buildConversationTimeline(
+      [
+        {
+          id: 'msg-skill-fork',
+          role: 'system',
+          content: '',
+          metadata: JSON.stringify({
+            kind: 'skill_forked',
+            skill_id: 'review',
+            skill_name: 'Code Review',
+            mode: 'fork',
+            result_preview: 'Review complete.',
+          }),
+          timestamp: '2026-04-20T00:00:00Z',
+        },
+      ],
+      {
+        toolCallCompletedLabel: 'Tool call completed',
+      },
+    )
+
+    expect(timeline).toHaveLength(1)
+    expect(timeline[0].metadata?.kind).toBe('skill_forked')
+    expect(timeline[0].metadata?.mode).toBe('fork')
+    expect(timeline[0].metadata?.result_preview).toBe('Review complete.')
+  })
 })

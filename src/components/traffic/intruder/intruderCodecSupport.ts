@@ -1,3 +1,4 @@
+import i18n from '@/i18n'
 import type { CodecRequestMeta } from '../codec/trafficCodecTypes'
 import { extractCodecMetaFromRawRequest } from '../codec/trafficCodecContextMenuSupport'
 import type { useTrafficCodec } from '../codec/useTrafficCodec'
@@ -50,7 +51,7 @@ export async function encodeIntruderRequestText(
 
   const result = await codec.encode(requestText, session.meta)
   if (!result.success) {
-    throw new Error(result.error || 'Codec encode failed')
+    throw new Error(result.error || i18n.global.t('trafficAnalysis.codec.errors.encodeFailed', { error: 'unknown' }))
   }
 
   return result.appliedRuleIds.length > 0 ? result.content : requestText
@@ -69,7 +70,7 @@ export async function batchEncodeIntruderRequestTexts(
   return requestTexts.map((text, index) => {
     const result = results[index]
     if (!result?.success) {
-      throw new Error(result?.error || 'Codec encode failed')
+      throw new Error(result?.error || i18n.global.t('trafficAnalysis.codec.errors.encodeFailed', { error: 'unknown' }))
     }
     return result.appliedRuleIds.length > 0 ? result.content : text
   })

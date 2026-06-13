@@ -443,6 +443,14 @@
 
           <!-- Right side icons -->
           <div class="flex items-center gap-2 shrink-0">
+            <button
+              v-if="canPreviewMemory"
+              class="icon-btn"
+              :title="t('agent.memoryPreviewButton')"
+              @click="openMemoryPreview"
+            >
+              <i class="fas fa-memory"></i>
+            </button>
             <!-- Context usage indicator -->
             <div
               v-if="effectiveContextUsage"
@@ -740,6 +748,77 @@
             <button @click.prevent="closeSlashManager">close</button>
           </form>
         </AppDialog>
+
+        <AppDialog :class="['modal', { 'modal-open': showMemoryPreview }]">
+          <div class="modal-box max-w-3xl">
+            <h3 class="font-bold text-lg">{{ t('agent.memoryPreviewTitle') }}</h3>
+            <p class="text-sm text-base-content/70 mt-1">
+              {{ t('agent.memoryPreviewButton') }} · 已过滤禁用自动注入的记忆
+            </p>
+
+            <div v-if="memoryPreviewLoading" class="flex items-center gap-2 py-6 text-sm text-base-content/70">
+              <span class="loading loading-spinner loading-sm"></span>
+              <span>{{ t('agent.memoryPreviewLoading') }}</span>
+            </div>
+            <div
+              v-else-if="memoryPreviewError"
+              class="rounded-lg border border-error/20 bg-error/10 px-3 py-2 text-sm text-error mt-4"
+            >
+              {{ memoryPreviewError }}
+            </div>
+            <div v-else-if="memoryPreviewResult" class="mt-4 space-y-4 max-h-[60vh] overflow-y-auto">
+              <div class="grid gap-2 md:grid-cols-2">
+                <div class="rounded-lg border border-base-300 bg-base-100 px-3 py-2">
+                  <div class="text-[11px] uppercase tracking-wide text-base-content/50">
+                    {{ t('agent.memoryPreviewQuery') }}
+                  </div>
+                  <div class="mt-1 text-sm break-words">
+                    {{ memoryPreviewResult.trace.query_preview || '-' }}
+                  </div>
+                </div>
+                <div class="rounded-lg border border-base-300 bg-base-100 px-3 py-2 text-xs space-y-1">
+                  <div>
+                    {{ t('agent.memoryPreviewMode') }}:
+                    {{
+                      memoryPreviewResult.trace.used_canonical_fallback
+                        ? 'canonical fallback'
+                        : 'hybrid retrieval'
+                    }}
+                  </div>
+                  <div>
+                    {{ t('agent.memoryPreviewHits') }}:
+                    {{ memoryPreviewResult.trace.hit_count }}/{{ memoryPreviewResult.trace.requested_top_k }}
+                  </div>
+                </div>
+              </div>
+
+              <div v-if="memoryPreviewResult.hits.length === 0" class="text-sm text-base-content/60">
+                {{ t('agent.memoryPreviewEmpty') }}
+              </div>
+
+              <article
+                v-for="hit in memoryPreviewResult.hits"
+                :key="hit.id"
+                class="rounded-xl border border-base-300/70 bg-base-100 px-3 py-3"
+              >
+                <div class="flex flex-wrap items-center gap-2 text-xs mb-2">
+                  <span class="badge badge-info badge-sm">{{ hit.kind }}</span>
+                  <span class="badge badge-ghost badge-sm">{{ hit.scope }}</span>
+                  <span class="badge badge-ghost badge-sm">{{ hit.source }}</span>
+                  <span class="badge badge-ghost badge-sm">score {{ hit.score.toFixed(2) }}</span>
+                </div>
+                <div class="text-sm whitespace-pre-wrap break-words">{{ hit.text }}</div>
+              </article>
+            </div>
+
+            <div class="modal-action">
+              <button class="btn" @click="closeMemoryPreview">{{ t('agent.memoryPreviewClose') }}</button>
+            </div>
+          </div>
+          <form method="dialog" class="modal-backdrop bg-black/50" @click="closeMemoryPreview">
+            <button>close</button>
+          </form>
+        </AppDialog>
       </Teleport>
       <input
         ref="importSlashInputRef"
@@ -806,6 +885,10 @@ import type {
   ProcessedDocumentResult,
 } from '@/types/agent'
 import type { MentionTokenKind } from '@/components/InputArea/mentionTokenSupport'
+import {
+  previewMemoryRetrieval,
+  type MemoryPreviewResult,
+} from '@/composables/useRetrievedMemory'
 
 const { t } = useI18n()
 const draggable = defineAsyncComponent(() => import('vuedraggable'))
@@ -868,6 +951,7 @@ interface AgentOption {
 const props = defineProps<{
   inputMessage: string
   conversationId?: string | null
+  active?: boolean
   isLoading: boolean
   showDebugInfo: boolean
   allowTakeover?: boolean
@@ -926,6 +1010,33 @@ const emit = defineEmits<{
 // removed architecture utilities
 
 const allowTakeover = computed(() => props.allowTakeover === true)
+const isInputAreaActive = computed(() => props.active !== false)
+
+const showMemoryPreview = ref(false)
+const memoryPreviewLoading = ref(false)
+const memoryPreviewError = ref<string | null>(null)
+const memoryPreviewResult = ref<MemoryPreviewResult | null>(null)
+const canPreviewMemory = computed(() => (props.inputMessage || '').trim().length > 0)
+
+async function openMemoryPreview() {
+  const query = (props.inputMessage || '').trim()
+  if (!query) return
+  showMemoryPreview.value = true
+  memoryPreviewLoading.value = true
+  memoryPreviewError.value = null
+  memoryPreviewResult.value = null
+  try {
+    memoryPreviewResult.value = await previewMemoryRetrieval(query)
+  } catch (error) {
+    memoryPreviewError.value = error instanceof Error ? error.message : String(error)
+  } finally {
+    memoryPreviewLoading.value = false
+  }
+}
+
+function closeMemoryPreview() {
+  showMemoryPreview.value = false
+}
 
 // --- New input logic ---
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
@@ -1312,6 +1423,7 @@ const {
   triggerFileSelect,
 } = useInputAttachments({
   conversationId: () => props.conversationId ?? null,
+  isActive: () => isInputAreaActive.value,
   emitAddAttachments: files => {
     emit('add-attachments', files)
   },
@@ -1897,7 +2009,9 @@ onMounted(async () => {
   window.addEventListener('click', handleClickOutside, true)
 
   // 设置 Tauri 拖放监听
-  await setupNativeDragDrop()
+  if (isInputAreaActive.value) {
+    await setupNativeDragDrop()
+  }
 
   // 自动聚焦输入框
   focusInput()
@@ -1908,6 +2022,19 @@ onUnmounted(() => {
   teardownNativeDragDrop()
   cancelHideMentionPreview()
 })
+
+watch(
+  isInputAreaActive,
+  active => {
+    if (active) {
+      void setupNativeDragDrop()
+      return
+    }
+    isDragOver.value = false
+    teardownNativeDragDrop()
+  },
+  { flush: 'post' }
+)
 
 watch(
   () => props.inputMessage,

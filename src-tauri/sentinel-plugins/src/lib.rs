@@ -40,7 +40,6 @@ mod plugin_finding_sanitizer;
 pub mod plugin_ops;
 // Legacy module — kept for reference but not compiled (one_* crates removed)
 // pub mod one_plugin_runtime;
-pub mod qjs_runtime;
 pub mod sentinel_js_runtime;
 pub mod request_scheduler;
 pub mod runtime_config;

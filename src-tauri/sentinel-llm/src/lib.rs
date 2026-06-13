@@ -46,7 +46,9 @@ pub mod usage;
 pub use agent::{get_rig_provider, needs_gemini_config, validate_config};
 pub use client::LlmClient;
 pub use config::LlmConfig;
-pub use log::{log_request, log_request_with_image, log_response, write_llm_log};
+pub use log::{
+    log_context_messages, log_request, log_request_with_image, log_response, write_llm_log,
+};
 pub use message::ImageAttachment;
 pub use message::{
     build_user_message, build_user_message_with_images, convert_chat_history,

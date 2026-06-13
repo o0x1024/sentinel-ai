@@ -2,6 +2,7 @@ import type { TrafficContextMenuActionItem } from './trafficContextMenuSectionSu
 
 export interface TrafficContextSubmenuItem extends TrafficContextMenuActionItem {
   suffixText?: string
+  labelText?: string
 }
 
 export interface TrafficContextSubmenu {

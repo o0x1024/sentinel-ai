@@ -7,7 +7,6 @@
   "scripts": {
     "dev": "vite",
     "build": "cross-env BROWSERSLIST_IGNORE_OLD_DATA=1 vite build",
-    "build:license-admin": "vite build --config src-tauri/sentinel-license/admin-ui/vite.config.ts",
     "build:check": "vue-tsc --noEmit --skipLibCheck && cross-env BROWSERSLIST_IGNORE_OLD_DATA=1 vite build",
     "preview": "vite preview",
     "tauri": "tauri",

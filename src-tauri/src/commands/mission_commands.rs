@@ -13,6 +13,8 @@ use crate::services::ensure_bot_console_access;
 use crate::services::mission_planner::{
     plan_mission_from_text, validate_mission_draft, MissionDraft, PlannerResult,
 };
+use crate::services::mission_run_worker::spawn_mission_run_worker;
+use crate::services::mission_scheduler::calculate_next_run_from_trigger_public;
 
 const DEFAULT_RUN_LIMIT: i64 = 50;
 const DEFAULT_RUNTIME_DETAIL_LIMIT: i64 = 50;
@@ -78,10 +80,17 @@ pub async fn mission_update_fields(
         }
     }
 
-    db_service
+    let trigger_updated = request.trigger_json.is_some();
+    let mission = db_service
         .update_mission_fields(request)
         .await
-        .map_err(|e| format!("Failed to update mission: {e}"))
+        .map_err(|e| format!("Failed to update mission: {e}"))?;
+
+    if trigger_updated && mission.status == "active" {
+        return reload_mission_with_schedule(&db_service, &mission).await;
+    }
+
+    Ok(mission)
 }
 
 #[tauri::command]
@@ -104,10 +113,12 @@ pub async fn mission_resume(
 ) -> Result<Mission, String> {
     ensure_bot_console_access()?;
 
-    db_service
+    let mission = db_service
         .update_mission_status(&id, "active")
         .await
-        .map_err(|e| format!("Failed to resume mission: {e}"))
+        .map_err(|e| format!("Failed to resume mission: {e}"))?;
+
+    reload_mission_with_schedule(&db_service, &mission).await
 }
 
 #[tauri::command]
@@ -130,10 +141,12 @@ pub async fn mission_activate(
 ) -> Result<Mission, String> {
     ensure_bot_console_access()?;
 
-    db_service
+    let mission = db_service
         .update_mission_status(&id, "active")
         .await
-        .map_err(|e| format!("Failed to activate mission: {e}"))
+        .map_err(|e| format!("Failed to activate mission: {e}"))?;
+
+    reload_mission_with_schedule(&db_service, &mission).await
 }
 
 #[tauri::command]
@@ -152,7 +165,9 @@ pub async fn mission_delete(
 #[tauri::command]
 pub async fn mission_run_now(
     id: String,
+    app_handle: tauri::AppHandle,
     db_service: State<'_, Arc<DatabaseService>>,
+    ai_manager: State<'_, Arc<AiServiceManager>>,
 ) -> Result<MissionRun, String> {
     ensure_bot_console_access()?;
 
@@ -165,7 +180,7 @@ pub async fn mission_run_now(
     let (profile_snapshot, tool_config_snapshot) =
         build_profile_snapshot(&db_service, mission.assistant_profile_id.as_deref()).await?;
 
-    db_service
+    let run = db_service
         .create_mission_run_with_snapshot(
             &id,
             "manual",
@@ -173,7 +188,18 @@ pub async fn mission_run_now(
             tool_config_snapshot.as_deref(),
         )
         .await
-        .map_err(|e| format!("Failed to trigger mission run: {e}"))
+        .map_err(|e| format!("Failed to trigger mission run: {e}"))?;
+
+    spawn_mission_run_worker(
+        app_handle,
+        db_service.inner().clone(),
+        ai_manager.inner().clone(),
+        mission,
+        run.id.clone(),
+        None,
+    );
+
+    Ok(run)
 }
 
 #[tauri::command]
@@ -234,6 +260,43 @@ pub async fn mission_list_deliveries(
 }
 
 /// Load the assistant profile and serialize a snapshot for the mission run.
+async fn sync_scheduled_next_run(
+    db_service: &DatabaseService,
+    mission_id: &str,
+    trigger_json: Option<&str>,
+) -> Result<(), String> {
+    let Some(trigger_json) = trigger_json.filter(|value| !value.trim().is_empty()) else {
+        return Ok(());
+    };
+
+    let next_run_at = calculate_next_run_from_trigger_public(trigger_json)?;
+    if let Some(next) = next_run_at {
+        db_service
+            .set_mission_next_run_at(mission_id, Some(next))
+            .await
+            .map_err(|e| format!("Failed to set mission next_run_at: {e}"))?;
+    }
+    Ok(())
+}
+
+async fn reload_mission_with_schedule(
+    db_service: &DatabaseService,
+    mission: &Mission,
+) -> Result<Mission, String> {
+    sync_scheduled_next_run(
+        db_service,
+        &mission.id,
+        mission.trigger_json.as_deref(),
+    )
+    .await?;
+
+    db_service
+        .get_mission(&mission.id)
+        .await
+        .map_err(|e| format!("Failed to reload mission: {e}"))?
+        .ok_or_else(|| format!("Mission not found: {}", mission.id))
+}
+
 async fn build_profile_snapshot(
     db_service: &DatabaseService,
     profile_id: Option<&str>,

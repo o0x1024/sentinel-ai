@@ -203,7 +203,7 @@
           <TrafficContextSubmenu
             v-if="interceptCodecSubmenu"
             :submenu="interceptCodecSubmenu"
-            label-prefix="trafficAnalysis.intercept.contextMenu"
+            label-prefix="trafficAnalysis.codec"
           />
           <div v-if="interceptTextCodecSubmenu && interceptSendAfterCodecContextMenuSections.length" class="divider my-1 h-px"></div>
           <TrafficContextMenuSections
@@ -516,6 +516,12 @@
       </form>
     </AppDialog>
 
+    <TrafficCodecRuleDialog
+      ref="codecRuleDialogRef"
+      :initial-meta="codecRuleDialogInitialMeta"
+      @saved="handleCodecRuleSaved"
+    />
+
   </div>
 </template>
 
@@ -576,6 +582,9 @@ import { buildInterceptViewTabs, createDefaultInterceptFilterRule } from './prox
 import { buildInterceptStateKey, resolveTrafficTextDisplayMode } from './trafficMessagePresentationSupport'
 import { useTrafficCodec } from './codec/useTrafficCodec'
 import { buildTrafficCodecContextSubmenu, extractCodecMetaFromUrl } from './codec/trafficCodecContextMenuSupport'
+import TrafficCodecRuleDialog from './codec/TrafficCodecRuleDialog.vue'
+import { openTrafficCodecRulesSettings } from './codec/trafficCodecSettingsSupport'
+import type { CodecRequestMeta } from './codec/trafficCodecTypes'
 
 interface CommandResponse<T> {
   success: boolean
@@ -586,6 +595,8 @@ interface CommandResponse<T> {
 const { t, locale } = useI18n();
 const codec = useTrafficCodec()
 const activeCodecRuleIds = ref<string[]>([])
+const codecRuleDialogRef = ref<InstanceType<typeof TrafficCodecRuleDialog> | null>(null)
+const codecRuleDialogInitialMeta = ref<CodecRequestMeta | undefined>(undefined)
 const { enabledTargets } = useTrafficSendTargets()
 const {
   panelRef: interceptContentHeaderRef,
@@ -812,11 +823,19 @@ const interceptCodecSubmenu = computed(() => {
       closeContextMenu()
     },
     onCreateRule: () => {
-      // TODO: open rule creation dialog (Task 8)
+      const item = contextMenu.value.item
+      if (item?.type === 'request') {
+        codecRuleDialogInitialMeta.value = extractCodecMetaFromUrl(
+          item.data.url,
+          item.data.method,
+          item.data.headers,
+        )
+        codecRuleDialogRef.value?.showModal()
+      }
       closeContextMenu()
     },
     onManageRules: () => {
-      // TODO: open rules panel (Task 11)
+      openTrafficCodecRulesSettings()
       closeContextMenu()
     },
   })
@@ -1029,6 +1048,11 @@ async function applyTextCodecToInterceptSelection(action: TrafficTextCodecAction
       error: getTrafficTextCodecErrorMessage(error),
     }))
   }
+}
+
+function handleCodecRuleSaved() {
+  codec.invalidateCache()
+  loadCurrentItemContent()
 }
 
 async function contextMenuForward() {
@@ -1589,7 +1613,7 @@ async function forwardCurrentItem() {
       const meta = extractCodecMetaFromUrl(item.data.url, item.data.method, item.data.headers)
       const encodeResult = await codec.encode(modifiedContent ?? requestContent.value, meta)
       if (!encodeResult.success) {
-        dialog.toast.error(`编码失败: ${encodeResult.error}`)
+        dialog.toast.error(t('trafficAnalysis.codec.errors.encodeFailed', { error: encodeResult.error }))
         isProcessing.value = false
         return
       }

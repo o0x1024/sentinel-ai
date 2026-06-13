@@ -17,6 +17,9 @@ use crate::services::mission_stateful_runtime::{
     build_runtime_context, build_system_prompt, build_task, parse_runtime_output,
     persist_runtime_output, run_status_from_completion, runtime_response_preview, summarize_output,
 };
+use crate::services::observer_data_collector::{
+    collect_observer_snapshot, inject_observer_data, is_observer_mission,
+};
 use sentinel_db::Database;
 
 pub struct MissionRunOutcome {
@@ -90,7 +93,7 @@ pub async fn execute_mission_run(
         .update_mission_run_agent_execution_id(&run_id, &execution_id)
         .await;
 
-    let runtime_context = match build_runtime_context(db, mission, &run_id).await {
+    let mut runtime_context = match build_runtime_context(db, mission, &run_id).await {
         Ok(context) => context,
         Err(e) => {
             let _ = db
@@ -104,6 +107,19 @@ pub async fn execute_mission_run(
             };
         }
     };
+
+    if is_observer_mission(mission) {
+        match collect_observer_snapshot(db, &runtime_context.previous_state_json).await {
+            Ok(snapshot) => {
+                if let Err(error) = inject_observer_data(&mut runtime_context, &snapshot) {
+                    tracing::warn!("Failed to inject observer data: {error}");
+                }
+            }
+            Err(error) => {
+                tracing::warn!("Observer data collection failed: {error}");
+            }
+        }
+    }
 
     let system_prompt = build_system_prompt(mission);
     let task = build_task(mission, &runtime_context);

@@ -21,7 +21,7 @@
 
           <div
             v-if="showSidebarHeightResizeHandle"
-            :class="[sidebarResizeHandleClass, 'hidden xl:block']"
+            :class="[sidebarResizeHandleClass, 'hidden lg:block']"
             @mousedown="startSidebarHeightResize($event)"
           ></div>
 
@@ -50,7 +50,7 @@
 
         <div
           v-if="showHistoryPanelResizeHandle"
-          :class="[historyResizeHandleClass, 'hidden xl:block']"
+          :class="[historyResizeHandleClass, 'hidden lg:block']"
           @mousedown="startWorkbenchPanelResize('history', $event)"
         ></div>
 

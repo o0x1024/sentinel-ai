@@ -2,7 +2,7 @@
 //!
 //! Provides `parse_js_literals` which uses `one_parser` to extract string
 //! literals from JavaScript/TypeScript source code. The host function bridge
-//! to QuickJS lives in `qjs_runtime.rs`.
+//! lives in `sentinel_js_runtime.rs`.
 
 use super::Extension;
 

@@ -38,6 +38,14 @@ pub struct McpConnectionInfo {
 static MCP_CONNECTIONS: once_cell::sync::Lazy<RwLock<HashMap<String, McpConnectionInfo>>> =
     once_cell::sync::Lazy::new(|| RwLock::new(HashMap::new()));
 
+/// Persistent MCP clients - reused across tool calls to keep connections alive.
+/// Without this, each tool call spawns a new stdio child process that dies
+/// immediately after the call, causing side-effects (e.g. opened browser pages)
+/// to be destroyed.
+static MCP_PERSISTENT_CLIENTS: once_cell::sync::Lazy<
+    RwLock<HashMap<String, std::sync::Arc<tokio::sync::Mutex<crate::mcp_transport::McpClient>>>>,
+> = once_cell::sync::Lazy::new(|| RwLock::new(HashMap::new()));
+
 /// Register MCP connection info
 pub async fn register_mcp_connection(info: McpConnectionInfo) {
     let mut connections = MCP_CONNECTIONS.write().await;
@@ -48,6 +56,36 @@ pub async fn register_mcp_connection(info: McpConnectionInfo) {
 pub async fn unregister_mcp_connection(server_name: &str) {
     let mut connections = MCP_CONNECTIONS.write().await;
     connections.remove(server_name);
+
+    let mut clients = MCP_PERSISTENT_CLIENTS.write().await;
+    clients.remove(server_name);
+}
+
+/// Store a persistent MCP client so tool executors can reuse it
+/// instead of spawning a new child process for each call.
+pub async fn store_persistent_client(
+    server_name: &str,
+    client: crate::mcp_transport::McpClient,
+) {
+    let mut clients = MCP_PERSISTENT_CLIENTS.write().await;
+    clients.insert(
+        server_name.to_string(),
+        std::sync::Arc::new(tokio::sync::Mutex::new(client)),
+    );
+}
+
+/// Remove a persistent MCP client.
+pub async fn remove_persistent_client(server_name: &str) {
+    let mut clients = MCP_PERSISTENT_CLIENTS.write().await;
+    clients.remove(server_name);
+}
+
+/// Get a persistent MCP client for direct use (e.g. from mcp_call_tool).
+pub async fn get_persistent_client(
+    server_name: &str,
+) -> Option<std::sync::Arc<tokio::sync::Mutex<crate::mcp_transport::McpClient>>> {
+    let clients = MCP_PERSISTENT_CLIENTS.read().await;
+    clients.get(server_name).cloned()
 }
 
 /// Get MCP connection info
@@ -74,41 +112,8 @@ pub fn create_mcp_tool_executor(server_name: String, tool_name: String) -> ToolE
     })
 }
 
-/// Internal MCP tool execution using rmcp
-async fn execute_mcp_tool_internal(
-    conn_info: &McpConnectionInfo,
-    tool_name: &str,
-    args: Value,
-) -> Result<Value, String> {
-    tracing::info!(
-        "Executing MCP tool: {} on server {} (transport: {}, endpoint: {}, command: {} {:?})",
-        tool_name,
-        conn_info.server_name,
-        conn_info.transport.transport_type,
-        conn_info.transport.url,
-        conn_info.transport.command,
-        conn_info.transport.args
-    );
-
-    let client = connect_mcp_client(&conn_info.transport).await?;
-
-    // Convert arguments
-    let args_map: Option<serde_json::Map<String, Value>> = if args.is_object() {
-        args.as_object().cloned()
-    } else {
-        None
-    };
-
-    // Call the tool
-    let result = client
-        .call_tool(rmcp::model::CallToolRequestParam {
-            name: tool_name.to_string().into(),
-            arguments: args_map,
-        })
-        .await
-        .map_err(|e| format!("MCP tool call failed: {}", e))?;
-
-    // Convert result to JSON
+/// Convert MCP call result to JSON value.
+fn mcp_result_to_json(result: &rmcp::model::CallToolResult) -> Value {
     let content_json: Vec<Value> = result
         .content
         .iter()
@@ -138,10 +143,75 @@ async fn execute_mcp_tool_internal(
         })
         .collect();
 
-    Ok(serde_json::json!({
+    serde_json::json!({
         "content": content_json,
         "is_error": result.is_error.unwrap_or(false)
-    }))
+    })
+}
+
+/// Internal MCP tool execution using rmcp.
+///
+/// Prefers the persistent client stored during connect_server_internal.
+/// Falls back to creating a temporary connection only when no persistent
+/// client exists (should be rare).
+async fn execute_mcp_tool_internal(
+    conn_info: &McpConnectionInfo,
+    tool_name: &str,
+    args: Value,
+) -> Result<Value, String> {
+    tracing::info!(
+        "Executing MCP tool: {} on server {} (transport: {}, endpoint: {}, command: {} {:?})",
+        tool_name,
+        conn_info.server_name,
+        conn_info.transport.transport_type,
+        conn_info.transport.url,
+        conn_info.transport.command,
+        conn_info.transport.args
+    );
+
+    let args_map: Option<serde_json::Map<String, Value>> = if args.is_object() {
+        args.as_object().cloned()
+    } else {
+        None
+    };
+
+    let call_param = rmcp::model::CallToolRequestParam {
+        name: tool_name.to_string().into(),
+        arguments: args_map,
+    };
+
+    // Try the persistent client first
+    let client_arc = {
+        let clients = MCP_PERSISTENT_CLIENTS.read().await;
+        clients.get(&conn_info.server_name).cloned()
+    };
+
+    if let Some(client_arc) = client_arc {
+        tracing::debug!(
+            "Reusing persistent MCP client for server: {}",
+            conn_info.server_name
+        );
+        let client = client_arc.lock().await;
+        let result = client
+            .call_tool(call_param)
+            .await
+            .map_err(|e| format!("MCP tool call failed: {}", e))?;
+        return Ok(mcp_result_to_json(&result));
+    }
+
+    // Fallback: create a temporary connection (logs a warning because this
+    // path causes stdio servers to spawn and immediately die)
+    tracing::warn!(
+        "No persistent MCP client for server '{}', creating temporary connection",
+        conn_info.server_name
+    );
+    let client = connect_mcp_client(&conn_info.transport).await?;
+    let result = client
+        .call_tool(call_param)
+        .await
+        .map_err(|e| format!("MCP tool call failed: {}", e))?;
+
+    Ok(mcp_result_to_json(&result))
 }
 
 /// Load and register MCP tools from a connected server
