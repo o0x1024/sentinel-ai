@@ -17,7 +17,17 @@ use crate::runtime_events::emit_active_probe_event;
 use crate::types::{Finding, PluginMetadata};
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::OnceLock;
+use tokio::sync::Semaphore;
 use tracing::debug;
+
+const PLUGIN_FETCH_MAX_CONCURRENT: usize = 200;
+
+static PLUGIN_FETCH_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
+
+fn plugin_fetch_semaphore() -> &'static Semaphore {
+    PLUGIN_FETCH_SEMAPHORE.get_or_init(|| Semaphore::new(PLUGIN_FETCH_MAX_CONCURRENT))
+}
 
 pub(crate) use sentinel_js_runtime::with_plugin_ctx;
 
@@ -98,15 +108,10 @@ pub(crate) fn parse_js_literals(_code: String, _filename: Option<String>) -> JsP
 // ---------------------------------------------------------------------------
 
 pub(crate) async fn plugin_fetch(url: String, options: FetchOptions) -> FetchResponse {
-    use crate::plugin_fetch_context::{build_plugin_request_schedule, fetch_policy_kind_for_context};
-    use crate::request_scheduler::configured_policy_for_kind;
+    use crate::plugin_fetch_context::check_fetch_allowed;
     use crate::{
         complete_active_probe, enqueue_active_probe, fail_active_probe,
         mark_active_probe_running, ActiveProbeRequest,
-    };
-    use crate::{
-        complete_plugin_request, enqueue_plugin_request, fail_plugin_request,
-        mark_plugin_request_running,
     };
     use std::time::{Duration, Instant};
     use tokio::time::timeout;
@@ -129,52 +134,28 @@ pub(crate) async fn plugin_fetch(url: String, options: FetchOptions) -> FetchRes
     let timeout_ms = if active_probe.is_some() {
         active_probe_defaults.timeout_ms
     } else if plugin_requested_timeout > 0 {
-        plugin_requested_timeout.clamp(1_000, 120_000)
+        plugin_requested_timeout.clamp(500, 300_000)
     } else {
         8_000
     };
 
     let plugin_ctx = with_plugin_ctx(|ctx| ctx.clone());
 
-    let plugin_fetch_schedule = if active_probe.is_none() {
-        match fetch_policy_kind_for_context(&plugin_ctx) {
-            Ok(Some(kind)) => {
-                match build_plugin_request_schedule(&plugin_ctx, kind, &request_id, &method, &url)
-                {
-                    Ok(schedule) => Some(schedule),
-                    Err(error) => {
-                        return FetchResponse {
-                            success: false,
-                            status: 0,
-                            headers: std::collections::HashMap::new(),
-                            body: String::new(),
-                            body_bytes: Vec::new(),
-                            ok: false,
-                            redirected: false,
-                            final_url: url,
-                            error: Some(error),
-                        };
-                    }
-                }
-            }
-            Ok(None) => None,
-            Err(error) => {
-                return FetchResponse {
-                    success: false,
-                    status: 0,
-                    headers: std::collections::HashMap::new(),
-                    body: String::new(),
-                    body_bytes: Vec::new(),
-                    ok: false,
-                    redirected: false,
-                    final_url: url,
-                    error: Some(error),
-                };
-            }
+    if active_probe.is_none() {
+        if let Err(error) = check_fetch_allowed(&plugin_ctx) {
+            return FetchResponse {
+                success: false,
+                status: 0,
+                headers: std::collections::HashMap::new(),
+                body: String::new(),
+                body_bytes: Vec::new(),
+                ok: false,
+                redirected: false,
+                final_url: url,
+                error: Some(error),
+            };
         }
-    } else {
-        None
-    };
+    }
 
     let client = match get_fetch_client(follow_redirects, max_redirects).await {
         Ok(client) => client,
@@ -291,61 +272,16 @@ pub(crate) async fn plugin_fetch(url: String, options: FetchOptions) -> FetchRes
         mark_active_probe_running(&request_id);
     }
 
-    if let Some(schedule) = plugin_fetch_schedule.as_ref() {
-        let policy = configured_policy_for_kind(schedule.kind);
-        let dispatch_rx = match enqueue_plugin_request(schedule.clone(), policy) {
-            Ok(dispatch_rx) => dispatch_rx,
-            Err(error) => {
-                return FetchResponse {
-                    success: false,
-                    status: 0,
-                    headers: std::collections::HashMap::new(),
-                    body: String::new(),
-                    body_bytes: Vec::new(),
-                    ok: false,
-                    redirected: false,
-                    final_url: url.clone(),
-                    error: Some(error),
-                };
-            }
-        };
-        let grant = match dispatch_rx.await {
-            Ok(Ok(grant)) => grant,
-            Ok(Err(error)) => {
-                return FetchResponse {
-                    success: false,
-                    status: 0,
-                    headers: std::collections::HashMap::new(),
-                    body: String::new(),
-                    body_bytes: Vec::new(),
-                    ok: false,
-                    redirected: false,
-                    final_url: url.clone(),
-                    error: Some(error),
-                };
-            }
-            Err(_) => {
-                return FetchResponse {
-                    success: false,
-                    status: 0,
-                    headers: std::collections::HashMap::new(),
-                    body: String::new(),
-                    body_bytes: Vec::new(),
-                    ok: false,
-                    redirected: false,
-                    final_url: url.clone(),
-                    error: Some(
-                        "Plugin request scheduler dropped dispatch grant".to_string(),
-                    ),
-                };
-            }
-        };
-        effective_timeout_ms = effective_timeout_ms.max(grant.timeout_ms);
-        if grant.total_wait_ms > 0 {
-            tokio::time::sleep(Duration::from_millis(grant.total_wait_ms)).await;
-        }
-        mark_plugin_request_running(schedule.kind, &request_id);
-    }
+    let _fetch_permit = if active_probe_request.is_none() {
+        Some(
+            plugin_fetch_semaphore()
+                .acquire()
+                .await
+                .expect("plugin fetch semaphore closed"),
+        )
+    } else {
+        None
+    };
 
     let request_started_at = Instant::now();
     let mut req_builder = match method.as_str() {
@@ -447,30 +383,6 @@ pub(crate) async fn plugin_fetch(url: String, options: FetchOptions) -> FetchRes
             complete_active_probe(&request_id, Some(response.status), response_elapsed_ms);
         } else {
             fail_active_probe(
-                &request_id,
-                if response.status > 0 {
-                    Some(response.status)
-                } else {
-                    None
-                },
-                response.error.clone(),
-                response_elapsed_ms,
-            );
-        }
-    }
-
-    if let Some(schedule) = plugin_fetch_schedule.as_ref() {
-        let response_elapsed_ms = Some(request_started_at.elapsed().as_millis() as u64);
-        if response.success {
-            complete_plugin_request(
-                schedule.kind,
-                &request_id,
-                Some(response.status),
-                response_elapsed_ms,
-            );
-        } else {
-            fail_plugin_request(
-                schedule.kind,
                 &request_id,
                 if response.status > 0 {
                     Some(response.status)
