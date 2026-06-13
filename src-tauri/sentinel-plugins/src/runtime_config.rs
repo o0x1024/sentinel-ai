@@ -106,12 +106,19 @@ impl ActiveProbeRuntimeSettings {
 pub struct PluginRuntimeSettings {
     #[serde(default)]
     pub active_probe: ActiveProbeRuntimeSettings,
+    #[serde(default = "default_direct_fetch_max_concurrent")]
+    pub direct_fetch_max_concurrent: u64,
+}
+
+fn default_direct_fetch_max_concurrent() -> u64 {
+    crate::plugin_fetch_limits::default_direct_fetch_max_concurrent()
 }
 
 impl Default for PluginRuntimeSettings {
     fn default() -> Self {
         Self {
             active_probe: ActiveProbeRuntimeSettings::default(),
+            direct_fetch_max_concurrent: default_direct_fetch_max_concurrent(),
         }
     }
 }
@@ -120,6 +127,9 @@ impl PluginRuntimeSettings {
     pub fn sanitized(&self) -> Self {
         Self {
             active_probe: self.active_probe.sanitized(),
+            direct_fetch_max_concurrent: crate::plugin_fetch_limits::sanitize_direct_fetch_max_concurrent(
+                self.direct_fetch_max_concurrent,
+            ),
         }
     }
 }
@@ -139,6 +149,9 @@ pub fn get_plugin_runtime_settings() -> PluginRuntimeSettings {
 
 pub fn set_plugin_runtime_settings(settings: PluginRuntimeSettings) {
     let sanitized = settings.sanitized();
+    crate::plugin_fetch_limits::configure_direct_fetch_max_concurrent(
+        sanitized.direct_fetch_max_concurrent,
+    );
     let mut current = plugin_runtime_settings_store()
         .write()
         .expect("plugin runtime settings poisoned");
@@ -161,13 +174,19 @@ mod tests {
     }
 
     #[test]
-    fn clamps_configured_timeout_to_runtime_limits() {
-        let active_probe = ActiveProbeRuntimeSettings {
-            timeout_ms: 999_999,
-            ..ActiveProbeRuntimeSettings::default()
+    fn clamps_direct_fetch_max_concurrent() {
+        let settings = super::PluginRuntimeSettings {
+            direct_fetch_max_concurrent: 0,
+            ..Default::default()
         }
         .sanitized();
+        assert_eq!(settings.direct_fetch_max_concurrent, 1);
 
-        assert_eq!(active_probe.timeout_ms, 120_000);
+        let settings = super::PluginRuntimeSettings {
+            direct_fetch_max_concurrent: 999_999,
+            ..Default::default()
+        }
+        .sanitized();
+        assert_eq!(settings.direct_fetch_max_concurrent, 1000);
     }
 }

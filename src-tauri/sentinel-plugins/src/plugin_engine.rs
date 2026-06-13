@@ -17,17 +17,7 @@ use crate::runtime_events::emit_active_probe_event;
 use crate::types::{Finding, PluginMetadata};
 use std::collections::HashSet;
 use std::path::PathBuf;
-use std::sync::OnceLock;
-use tokio::sync::Semaphore;
 use tracing::debug;
-
-const PLUGIN_FETCH_MAX_CONCURRENT: usize = 200;
-
-static PLUGIN_FETCH_SEMAPHORE: OnceLock<Semaphore> = OnceLock::new();
-
-fn plugin_fetch_semaphore() -> &'static Semaphore {
-    PLUGIN_FETCH_SEMAPHORE.get_or_init(|| Semaphore::new(PLUGIN_FETCH_MAX_CONCURRENT))
-}
 
 pub(crate) use sentinel_js_runtime::with_plugin_ctx;
 
@@ -273,12 +263,7 @@ pub(crate) async fn plugin_fetch(url: String, options: FetchOptions) -> FetchRes
     }
 
     let _fetch_permit = if active_probe_request.is_none() {
-        Some(
-            plugin_fetch_semaphore()
-                .acquire()
-                .await
-                .expect("plugin fetch semaphore closed"),
-        )
+        Some(crate::plugin_fetch_limits::acquire_direct_fetch_permit().await)
     } else {
         None
     };

@@ -109,6 +109,13 @@ export function useTrafficPluginRuntimeSettings() {
     )
   }
 
+  const updateDirectFetchMaxConcurrent = (value: number) => {
+    trafficPluginRuntimeSettings.value = normalizeTrafficPluginRuntimeSettings({
+      ...trafficPluginRuntimeSettings.value,
+      directFetchMaxConcurrent: value,
+    })
+  }
+
   return {
     trafficPluginRuntimeSettings,
     isSavingTrafficPluginRuntimeSettings,
@@ -119,5 +126,6 @@ export function useTrafficPluginRuntimeSettings() {
     resetTrafficPluginRuntimePolicies,
     applyTrafficPluginRuntimePreset,
     updateTrafficPluginRuntimePolicy,
+    updateDirectFetchMaxConcurrent,
   }
 }

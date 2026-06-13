@@ -90,6 +90,7 @@ describe('useProxyConfiguration', () => {
               maxConcurrentPerPlugin: 10,
               timeoutMs: 8000,
             },
+            directFetchMaxConcurrent: 200,
           })
         case 'get_traffic_oast_config':
           return createCommandResponse({

@@ -37,6 +37,21 @@ describe('pluginRuntimeSettingsSupport', () => {
     expect(normalized.activeProbe.minHostCooldownMs).toBe(0)
     expect(normalized.activeProbe.jitterRange).toEqual([100, 9000])
     expect(normalized.activeProbe.timeoutMs).toBe(120000)
+    expect(normalized.directFetchMaxConcurrent).toBe(200)
+  })
+
+  it('clamps direct fetch concurrency into allowed range', () => {
+    const normalized = normalizeTrafficPluginRuntimeSettings({
+      ...createDefaultTrafficPluginRuntimeSettings(),
+      directFetchMaxConcurrent: 0,
+    })
+
+    expect(normalized.directFetchMaxConcurrent).toBe(1)
+  })
+
+  it('applies direct fetch concurrency from presets', () => {
+    expect(createTrafficPluginRuntimePreset('local_fast').directFetchMaxConcurrent).toBe(300)
+    expect(createTrafficPluginRuntimePreset('conservative').directFetchMaxConcurrent).toBe(100)
   })
 
   it('balanced preset matches the shipped defaults', () => {

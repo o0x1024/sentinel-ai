@@ -51,6 +51,30 @@
       </button>
     </div>
 
+    <section class="rounded-lg border border-base-300 bg-base-100 px-4 py-4">
+      <div>
+        <h3 class="text-sm font-medium">
+          {{ $t('trafficAnalysis.proxyConfiguration.directFetchTitle') }}
+        </h3>
+        <p class="mt-1 text-xs text-base-content/60">
+          {{ $t('trafficAnalysis.proxyConfiguration.directFetchDesc') }}
+        </p>
+      </div>
+      <label class="form-control mt-4 max-w-sm">
+        <span class="label-text text-xs">{{
+          $t('trafficAnalysis.proxyConfiguration.directFetchMaxConcurrent')
+        }}</span>
+        <input
+          :value="trafficPluginRuntimeSettings.directFetchMaxConcurrent"
+          type="number"
+          min="1"
+          max="1000"
+          class="input input-bordered"
+          @input="updateDirectFetchMaxConcurrent(Number(($event.target as HTMLInputElement).value))"
+        />
+      </label>
+    </section>
+
     <div class="space-y-3">
       <section
         v-for="item in visiblePolicies"
@@ -157,6 +181,7 @@ const props = withDefaults(
       policyId: TrafficPluginRuntimePolicyId,
       policy: TrafficPluginRuntimeSettings[TrafficPluginRuntimePolicyId]
     ) => void
+    updateDirectFetchMaxConcurrent: (value: number) => void
     policyIds?: TrafficPluginRuntimePolicyId[]
     collapsible?: boolean
     defaultExpandedPolicyIds?: TrafficPluginRuntimePolicyId[]

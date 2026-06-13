@@ -36,6 +36,7 @@ pub mod plugin;
 pub mod plugin_context;
 pub mod plugin_engine;
 mod plugin_fetch_context;
+mod plugin_fetch_limits;
 mod plugin_fetch_types;
 mod plugin_finding_sanitizer;
 pub mod plugin_ops;

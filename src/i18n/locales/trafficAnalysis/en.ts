@@ -1364,6 +1364,10 @@ export default {
     fetchMaxPendingPerRun: 'Max pending per run',
     fetchMaxPendingPerPlugin: 'Max pending per plugin',
     fetchMaxGlobalConcurrent: 'Max global concurrency',
+    directFetchTitle: 'Direct plugin fetch',
+    directFetchDesc:
+      'Limits global HTTP concurrency for bounty, monitor, and agent plugin fetch calls. Does not affect the activeProbe queue.',
+    directFetchMaxConcurrent: 'Max direct fetch concurrency',
     fetchMaxConcurrentPerHost: 'Max concurrency per host',
     fetchMaxConcurrentPerRun: 'Max concurrency per run',
     fetchMaxConcurrentPerPlugin: 'Max concurrency per plugin',

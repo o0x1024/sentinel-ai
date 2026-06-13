@@ -44,6 +44,11 @@ export function normalizeTrafficPluginRuntimeSettings(
 ): TrafficPluginRuntimeSettings {
   return {
     activeProbe: normalizeActiveProbeSettings(settings.activeProbe),
+    directFetchMaxConcurrent: clampInteger(
+      settings.directFetchMaxConcurrent ?? 200,
+      1,
+      1000
+    ),
   }
 }
 
@@ -81,6 +86,7 @@ export function createTrafficPluginRuntimePreset(
         jitterRange: [0, 50],
         timeoutMs: 3000,
       },
+      directFetchMaxConcurrent: 300,
     }
   }
 
@@ -95,6 +101,7 @@ export function createTrafficPluginRuntimePreset(
       jitterRange: [400, 1000],
       timeoutMs: 3000,
     },
+    directFetchMaxConcurrent: 100,
   }
 }
 
@@ -110,6 +117,7 @@ export function applyTrafficPluginRuntimePresetToPolicies(
       nextSettings.activeProbe = presetSettings.activeProbe
     }
   }
+  nextSettings.directFetchMaxConcurrent = presetSettings.directFetchMaxConcurrent
   return normalizeTrafficPluginRuntimeSettings(nextSettings)
 }
 
@@ -124,6 +132,7 @@ export function resetTrafficPluginRuntimePoliciesToDefaults(
       nextSettings.activeProbe = defaults.activeProbe
     }
   }
+  nextSettings.directFetchMaxConcurrent = defaults.directFetchMaxConcurrent
   return normalizeTrafficPluginRuntimeSettings(nextSettings)
 }
 

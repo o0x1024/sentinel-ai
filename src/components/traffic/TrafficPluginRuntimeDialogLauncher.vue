@@ -138,6 +138,7 @@
               :reset-traffic-plugin-runtime-policies="resetTrafficPluginRuntimePoliciesDraft"
               :apply-traffic-plugin-runtime-preset="applyTrafficPluginRuntimePreset"
               :update-traffic-plugin-runtime-policy="updateTrafficPluginRuntimePolicy"
+              :update-direct-fetch-max-concurrent="updateDirectFetchMaxConcurrent"
               :policy-ids="policyIds"
               :collapsible="collapsible"
               :default-expanded-policy-ids="defaultExpandedPolicyIds"
@@ -226,6 +227,7 @@ const {
   resetTrafficPluginRuntimePoliciesDraft: resetTrafficPluginRuntimePoliciesDraftSettings,
   applyTrafficPluginRuntimePreset,
   updateTrafficPluginRuntimePolicy,
+  updateDirectFetchMaxConcurrent,
 } = useTrafficPluginRuntimeSettings()
 const { snapshot, history, refresh: refreshQueueState } = useTrafficPluginRuntimeQueue()
 const AUTO_SAVE_DELAY_MS = 700

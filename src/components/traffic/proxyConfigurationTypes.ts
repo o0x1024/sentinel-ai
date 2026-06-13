@@ -73,6 +73,7 @@ export interface TrafficPluginFetchPolicySettings {
 
 export interface TrafficPluginRuntimeSettings {
   activeProbe: TrafficPluginActiveProbeSettings
+  directFetchMaxConcurrent: number
 }
 
 export interface TrafficOastTestResult {
@@ -308,6 +309,7 @@ export function createDefaultTrafficPluginRuntimeSettings(): TrafficPluginRuntim
       maxConcurrentPerPlugin: 16,
       timeoutMs: 3000,
     },
+    directFetchMaxConcurrent: 200,
   }
 }
 
