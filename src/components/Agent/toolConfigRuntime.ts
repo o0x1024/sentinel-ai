@@ -39,6 +39,53 @@ export const normalizeToolIdList = (items: unknown): string[] => {
   return dedupeToolIds(items.filter((item): item is string => typeof item === 'string'))
 }
 
+export const isMcpToolId = (toolId: string): boolean => {
+  const normalized = toolId.trim().replace(/::/g, '__')
+  return normalized.startsWith('mcp__')
+}
+
+const filterUnavailableMcpTools = (toolIds: string[], availableToolIds: Set<string>) =>
+  normalizeToolIdList(toolIds).filter(
+    (toolId) => !isMcpToolId(toolId) || availableToolIds.has(toolId),
+  )
+
+export const pruneUnavailableMcpToolsFromConfig = (
+  config: UiToolConfigPayload,
+  availableToolIds: Iterable<string>,
+): { config: UiToolConfigPayload; changed: boolean } => {
+  const available = new Set(availableToolIds)
+  const manualFallback = normalizeToolIdList(config.manual_tools)
+  const strategy = parseToolSelectionStrategy(config.selection_strategy, manualFallback)
+
+  const nextPreselected = filterUnavailableMcpTools(config.preselected_tools, available)
+  const nextDisabled = filterUnavailableMcpTools(config.disabled_tools, available)
+  const nextManual = filterUnavailableMcpTools(strategy.manualTools, available)
+
+  const changed =
+    nextPreselected.length !== normalizeToolIdList(config.preselected_tools).length
+    || nextDisabled.length !== normalizeToolIdList(config.disabled_tools).length
+    || nextManual.length !== strategy.manualTools.length
+
+  if (!changed) {
+    return { config, changed: false }
+  }
+
+  const nextSelectionStrategy = strategy.mode === 'Manual'
+    ? { Manual: nextManual }
+    : config.selection_strategy
+
+  return {
+    config: {
+      ...config,
+      selection_strategy: nextSelectionStrategy,
+      preselected_tools: nextPreselected,
+      disabled_tools: nextDisabled,
+      manual_tools: nextManual,
+    },
+    changed: true,
+  }
+}
+
 export const parseToolSelectionStrategy = (
   strategyRaw: unknown,
   fallbackManualTools: string[],

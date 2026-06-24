@@ -3,7 +3,9 @@ import { describe, expect, it } from 'vitest'
 import {
   buildRuntimeToolConfigForExecution,
   buildRuntimeToolConfigForTeamRole,
+  isMcpToolId,
   normalizeUiToolConfigPayload,
+  pruneUnavailableMcpToolsFromConfig,
   runtimeToolConfigAllowsTool,
 } from '@/components/Agent/toolConfigRuntime'
 
@@ -195,5 +197,46 @@ describe('toolConfigRuntime', () => {
       Manual: ['ask_user_question', 'spawn_agent'],
     })
     expect(runtimeConfig.allowed_tools).toEqual(['ask_user_question', 'spawn_agent'])
+  })
+
+  it('detects MCP tool ids', () => {
+    expect(isMcpToolId('mcp__filesystem__read_file')).toBe(true)
+    expect(isMcpToolId('mcp::filesystem::read_file')).toBe(true)
+    expect(isMcpToolId('shell')).toBe(false)
+  })
+
+  it('prunes unavailable MCP tools from manual, preselected, and disabled lists', () => {
+    const available = ['shell', 'mcp__connected__tool_a']
+    const { config, changed } = pruneUnavailableMcpToolsFromConfig({
+      enabled: true,
+      selection_strategy: { Manual: ['shell', 'mcp__connected__tool_a', 'mcp__offline__tool_b'] },
+      max_tools: 5,
+      preselected_tools: ['mcp__offline__tool_c'],
+      disabled_tools: ['mcp__offline__tool_d'],
+      manual_tools: [],
+      allowed_tools: [],
+    }, available)
+
+    expect(changed).toBe(true)
+    expect(config.selection_strategy).toEqual({
+      Manual: ['shell', 'mcp__connected__tool_a'],
+    })
+    expect(config.preselected_tools).toEqual([])
+    expect(config.disabled_tools).toEqual([])
+  })
+
+  it('keeps non-MCP tools even when they are not in the available tool list', () => {
+    const { config, changed } = pruneUnavailableMcpToolsFromConfig({
+      enabled: true,
+      selection_strategy: 'Keyword',
+      max_tools: 5,
+      preselected_tools: ['custom_plugin_tool'],
+      disabled_tools: [],
+      manual_tools: [],
+      allowed_tools: [],
+    }, ['shell'])
+
+    expect(changed).toBe(false)
+    expect(config.preselected_tools).toEqual(['custom_plugin_tool'])
   })
 })

@@ -382,11 +382,16 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed, onMounted, watch, withDefaults } from 'vue'
+import { ref, computed, onMounted, onUnmounted, watch, withDefaults } from 'vue'
 import { invoke } from '@tauri-apps/api/core'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { useI18n } from 'vue-i18n'
 import { dialog } from '../../composables/useDialog'
-import { normalizeToolIdList, parseToolSelectionStrategy } from './toolConfigRuntime'
+import {
+  normalizeToolIdList,
+  parseToolSelectionStrategy,
+  pruneUnavailableMcpToolsFromConfig,
+} from './toolConfigRuntime'
 
 interface ToolMetadata {
   id: string
@@ -667,11 +672,23 @@ const getStrategyDescription = (strategy: string) => {
   return descriptions[strategy] || ''
 }
 
+const pruneUnavailableMcpSelections = () => {
+  const availableToolIds = allTools.value.map((tool) => tool.id)
+  const { config, changed } = pruneUnavailableMcpToolsFromConfig(
+    localConfig.value,
+    availableToolIds,
+  )
+  if (!changed) return
+  localConfig.value = toEditableConfig(config)
+  emitUpdate()
+}
+
 const loadTools = async () => {
   loading.value = true
   try {
     allTools.value = await invoke<ToolMetadata[]>('get_all_tool_metadata')
     statistics.value = await invoke<ToolStatistics>('get_tool_statistics')
+    pruneUnavailableMcpSelections()
   } catch (error) {
     console.error('Failed to load tools:', error)
   } finally {
@@ -777,7 +794,6 @@ const emitUpdate = () => {
     const normalizedTools = [...new Set(
       configToEmit.manual_tools.map((id: string) => id.replace(/::/g, '__'))
     )]
-    console.log('[ToolConfigPanel] Emitting manual_tools:', normalizedTools)
     // 将 selection_strategy 转换为 Rust 枚举格式: { Manual: [...] }
     configToEmit.selection_strategy = { Manual: normalizedTools } as any
     delete configToEmit.manual_tools
@@ -790,9 +806,19 @@ watch(() => props.config, (newConfig) => {
   localConfig.value = toEditableConfig(newConfig)
 }, { deep: true })
 
-onMounted(() => {
-  loadTools()
+let unlistenMcpToolsChanged: UnlistenFn | null = null
+
+onMounted(async () => {
+  await loadTools()
   loadUsageStats()
+  unlistenMcpToolsChanged = await listen('mcp:tools-changed', () => {
+    void loadTools()
+  })
+})
+
+onUnmounted(() => {
+  unlistenMcpToolsChanged?.()
+  unlistenMcpToolsChanged = null
 })
 </script>
 
